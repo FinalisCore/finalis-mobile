@@ -43,4 +43,9 @@ jobs:
         run: |
           apk="finalis-wallet-${TAG}.apk"
           cp app/build/outputs/apk/debug/app-debug.apk "$apk"
-          gh release create "$TAG" "$apk" --title "$TAG" --generate-notes
+          # Attach to a release created by hand for this tag, or create one.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$apk" --clobber
+          else
+            gh release create "$TAG" "$apk" --title "$TAG" --generate-notes
+          fi
