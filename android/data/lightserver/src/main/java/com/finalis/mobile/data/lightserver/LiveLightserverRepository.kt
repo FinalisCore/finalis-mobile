@@ -283,7 +283,13 @@ class LiveLightserverRepository(
         var debited = 0L
         for (input in tx.inputs) {
             if (input.prevTxidHex == ZeroTxid) continue
-            val prevTxPayload = rpcCall<TxResultDto>("get_tx", txidParams(input.prevTxidHex.lowercase()))
+            // Reward/settlement outputs are credited without a tx record, so get_tx reports not found
+            // (-32001) for them; their value cannot be attributed here.
+            val prevTxPayload = try {
+                rpcCall<TxResultDto>("get_tx", txidParams(input.prevTxidHex.lowercase()))
+            } catch (error: LightserverRpcException) {
+                if (error.code == -32001) continue else throw error
+            }
             val prevTx = parseTx(prevTxPayload.txHex)
             val prevOutput = prevTx.outputs.getOrNull(input.prevIndex)
             if (prevOutput != null && prevOutput.scriptPubKeyHex.lowercase() == targetScriptPubKeyHex) {
