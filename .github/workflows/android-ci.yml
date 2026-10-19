@@ -20,4 +20,5 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - run: gradle :app:assembleDebug :data:lightserver:testDebugUnitTest :app:testDebugUnitTest
+      # Use the wrapper: the runner's system Gradle (9.6+) is incompatible with AGP 8.x.
+      - run: ./gradlew test :app:assembleDebug
