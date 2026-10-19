@@ -8,6 +8,7 @@ import com.finalis.mobile.core.model.HistoryEntry
 import com.finalis.mobile.core.model.HistoryPageResult
 import com.finalis.mobile.core.model.ImportedWalletRecord
 import com.finalis.mobile.core.model.BalanceSnapshot
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.SubmittedTransactionRecord
 import com.finalis.mobile.core.wallet.SubmittedTransactionManager
 import com.finalis.mobile.core.wallet.WalletNetworkGuard
@@ -70,6 +71,10 @@ class WalletViewModel(
     var isRefreshing by mutableStateOf(false)
         private set
 
+    /** The wallet's network; before a wallet exists, the network chosen for onboarding. */
+    val activeNetwork: FinalisNetwork
+        get() = rpcSettingsState.network
+
     private val refreshMutex = Mutex()
     private var refreshGeneration = 0L
     private var pollingJob: Job? = null
@@ -122,9 +127,16 @@ class WalletViewModel(
     suspend fun loadStartup() {
         cancelPolling()
         invalidateRefreshes()
+        val storedWallet = withContext(Dispatchers.IO) {
+            walletSessionManager.loadCurrentWallet()?.also { wallet ->
+                // The stored wallet's network wins over any leftover onboarding selection.
+                if (rpcSettingsRepository.selectedNetwork() != wallet.walletProfile.network) {
+                    rpcSettingsRepository.setSelectedNetwork(wallet.walletProfile.network)
+                }
+            }
+        }
         syncRpcSettingsState()
         refreshEndpointHealth()
-        val storedWallet = withContext(Dispatchers.IO) { walletSessionManager.loadCurrentWallet() }
         walletRecord = storedWallet
         startupChecked = true
         if (storedWallet == null) {
@@ -141,6 +153,7 @@ class WalletViewModel(
             val importedWallet = withContext(Dispatchers.IO) {
                 walletSessionManager.importAndPersist(
                     privateKeyHex = importPrivateKeyHex,
+                    network = rpcSettingsRepository.selectedNetwork(),
                 )
             }
             cancelPolling()
@@ -158,6 +171,41 @@ class WalletViewModel(
         } finally {
             isImporting = false
         }
+    }
+
+    /** Onboarding only: picks the network the next imported wallet binds to. */
+    suspend fun selectOnboardingNetwork(network: FinalisNetwork) {
+        if (walletRecord != null || network == activeNetwork) return
+        invalidateRefreshes()
+        withContext(Dispatchers.IO) { rpcSettingsRepository.setSelectedNetwork(network) }
+        syncRpcSettingsState()
+        refreshEndpointHealth()
+    }
+
+    /**
+     * Moves the wallet to [network]: the same key is re-bound with that network's address, and
+     * submitted-transaction records (txids and reserved inputs of the old chain) are cleared.
+     * Endpoint lists are stored per network and survive the switch.
+     */
+    suspend fun switchNetwork(network: FinalisNetwork): ImportedWalletRecord? {
+        val currentWallet = walletRecord ?: return null
+        if (currentWallet.walletProfile.network == network) return currentWallet
+        cancelPolling()
+        invalidateRefreshes()
+        val rebound = withContext(Dispatchers.IO) {
+            submittedTransactionManager.clearAll()
+            rpcSettingsRepository.setSelectedNetwork(network)
+            walletSessionManager.rebindNetwork(currentWallet, network)
+        }
+        walletRecord = rebound
+        readState = DashboardState.Loading
+        exportArmed = false
+        exportedPrivateKeyHex = null
+        resetArmed = false
+        syncRpcSettingsState(message = "Switched to Finalis ${network.name}")
+        refreshEndpointHealth()
+        refreshDashboard(rebound)
+        return rebound
     }
 
     fun onToggleExport() {
@@ -202,12 +250,12 @@ class WalletViewModel(
         }
         invalidateRefreshes()
         val endpoint = try {
-            RpcEndpoint(normalizeRpcUrl(rpcSettingsState.inputValue))
+            RpcEndpoint(normalizeRpcUrl(rpcSettingsState.inputValue, activeNetwork))
         } catch (error: IllegalArgumentException) {
             syncRpcSettingsState(message = error.message ?: "Endpoint URL is invalid")
             return false
         }
-        val probe = probeRpcEndpoint(endpoint)
+        val probe = probeRpcEndpoint(endpoint, activeNetwork)
         if (!probe.isValid) {
             syncRpcSettingsState(message = formatProbeMessage(probe))
             diagnosticsState = buildDiagnosticsState(
@@ -238,7 +286,7 @@ class WalletViewModel(
             return false
         }
         invalidateRefreshes()
-        val probe = probeRpcEndpoint(endpoint)
+        val probe = probeRpcEndpoint(endpoint, activeNetwork)
         if (!probe.isValid) {
             syncRpcSettingsState(message = formatProbeMessage(probe))
             diagnosticsState = buildDiagnosticsState(
@@ -290,7 +338,7 @@ class WalletViewModel(
                 if (generation == refreshGeneration && currentWallet != null && currentWallet.privateKeyHex == targetWallet.privateKeyHex) {
                     walletRecord = targetWallet
                     val submitted = withContext(Dispatchers.IO) { submittedTransactionManager.listSubmitted() }
-                    val mismatch = WalletNetworkGuard.detectMismatch(status)
+                    val mismatch = WalletNetworkGuard.detectMismatch(status, targetWallet.walletProfile.network)
                     diagnosticsState = buildDiagnosticsState(
                         activeEndpoint = rpcSettingsState.activeEndpoint,
                         status = status,
@@ -302,6 +350,7 @@ class WalletViewModel(
                             status = status,
                             submitted = submitted,
                             mismatch = mismatch,
+                            expectedNetwork = targetWallet.walletProfile.network,
                             lifecycleState = buildTransactionLifecycleState(
                                 finalizedUtxos = emptyList(),
                                 submitted = submitted,
@@ -443,14 +492,14 @@ class WalletViewModel(
         }
         val probes = withContext(Dispatchers.IO) {
             val endpoints = rpcSettingsRepository.loadSettings().orderedEndpoints()
-            endpoints.map { endpoint -> probeRpcEndpoint(endpoint) }
+            endpoints.map { endpoint -> probeRpcEndpoint(endpoint, activeNetwork) }
         }
         val activeProbe = probes.firstOrNull { it.endpoint.url == rpcSettingsState.activeEndpoint?.url }
         val selectedProbe = activeProbe ?: probes.firstOrNull()
         try {
             val status = withContext(Dispatchers.IO) { repository.loadStatus() }
             syncRpcSettingsState()
-            val mismatch = WalletNetworkGuard.detectMismatch(status)
+            val mismatch = WalletNetworkGuard.detectMismatch(status, activeNetwork)
             diagnosticsState = buildDiagnosticsState(
                 activeEndpoint = rpcSettingsState.activeEndpoint,
                 status = status,

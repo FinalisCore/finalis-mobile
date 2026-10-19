@@ -27,11 +27,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.ImportedWalletRecord
 import com.finalis.mobile.core.wallet.WalletSendService
 
@@ -48,13 +50,21 @@ internal enum class WalletTab(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun WalletTopBar() {
+internal fun WalletTopBar(network: FinalisNetwork) {
     TopAppBar(
         title = {
-            Text(
-                text = "Finalis Wallet",
-                style = MaterialTheme.typography.titleLarge,
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Finalis Wallet",
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                if (network.isTestnet) {
+                    StatusChip(text = network.name.uppercase(), tone = StatusTone.Warning)
+                }
+            }
         },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.background,
@@ -142,6 +152,7 @@ internal fun WalletTabContent(
     onAddEndpoint: () -> Unit,
     onSelectEndpoint: (RpcEndpoint) -> Unit,
     onRemoveEndpoint: (RpcEndpoint) -> Unit,
+    onSwitchNetwork: (FinalisNetwork) -> Unit,
 ) {
     when (selectedTab) {
         WalletTab.Home -> HomeTabScreen(
@@ -207,6 +218,7 @@ internal fun WalletTabContent(
             onAddEndpoint = onAddEndpoint,
             onSelectEndpoint = onSelectEndpoint,
             onRemoveEndpoint = onRemoveEndpoint,
+            onSwitchNetwork = onSwitchNetwork,
         )
     }
 }
@@ -240,6 +252,7 @@ private fun HomeTabScreen(
                     NetworkMismatchSection(
                         status = readState.status,
                         mismatch = readState.mismatch,
+                        expectedNetwork = readState.expectedNetwork,
                     )
                 }
                 item {
@@ -391,6 +404,7 @@ private fun ActivityTabScreen(
                     NetworkMismatchSection(
                         status = readState.status,
                         mismatch = readState.mismatch,
+                        expectedNetwork = readState.expectedNetwork,
                     )
                 }
             }
@@ -439,12 +453,22 @@ private fun InfoTabScreen(
     onAddEndpoint: () -> Unit,
     onSelectEndpoint: (RpcEndpoint) -> Unit,
     onRemoveEndpoint: (RpcEndpoint) -> Unit,
+    onSwitchNetwork: (FinalisNetwork) -> Unit,
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        item {
+            NetworkSelectionSection(
+                selectedNetwork = wallet.walletProfile.network,
+                title = "Network",
+                subtitle = "Switching keeps this key but uses that network's address. Submitted-transaction records are cleared; endpoints are kept per network.",
+                enabled = true,
+                onSelectNetwork = onSwitchNetwork,
+            )
+        }
         item {
             DiagnosticsSection(
                 rpcSettingsState = rpcSettingsState,

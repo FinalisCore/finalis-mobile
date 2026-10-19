@@ -21,7 +21,7 @@ import com.finalis.mobile.core.model.WalletUtxo
 import com.finalis.mobile.core.storage.SubmittedTransactionStore
 import com.finalis.mobile.core.storage.WalletStore
 import com.finalis.mobile.core.wallet.SubmittedTransactionManager
-import com.finalis.mobile.core.wallet.FinalisMainnet
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.wallet.WalletSafetyManager
 import com.finalis.mobile.core.wallet.WalletSessionManager
 import com.finalis.mobile.data.lightserver.LightserverRepository
@@ -166,11 +166,11 @@ private class MutableRefreshRepository : LightserverRepository {
     override suspend fun loadStatus(): NetworkIdentity {
         statusCalls += 1
         return NetworkIdentity(
-            name = FinalisMainnet.EXPECTED_NETWORK_NAME,
-            networkId = FinalisMainnet.EXPECTED_NETWORK_ID,
+            name = FinalisNetwork.MAINNET.name,
+            networkId = FinalisNetwork.MAINNET.networkId,
             protocolVersion = 1,
             featureFlags = 1L,
-            genesisHash = FinalisMainnet.EXPECTED_GENESIS_HASH,
+            genesisHash = FinalisNetwork.MAINNET.genesisHash,
             tipHeight = 100L,
             tipHash = "f".repeat(64),
             serverTruth = "finalized_only",

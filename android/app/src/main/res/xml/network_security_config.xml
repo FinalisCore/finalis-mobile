@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext HTTP is refused except for the known Finalis endpoints that only serve plain HTTP. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Public testnet lightserver RPC (http://130.61.126.39:19544/rpc). -->
+        <domain includeSubdomains="false">130.61.126.39</domain>
+        <!-- Mainnet default explorers (FinalisNetwork.MAINNET.defaultEndpoints). -->
+        <domain includeSubdomains="false">85.217.171.168</domain>
+        <domain includeSubdomains="false">64.23.244.126</domain>
+    </domain-config>
+</network-security-config>

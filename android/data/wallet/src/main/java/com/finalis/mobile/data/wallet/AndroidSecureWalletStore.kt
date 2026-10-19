@@ -3,6 +3,7 @@ package com.finalis.mobile.data.wallet
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.ImportedWalletRecord
 import com.finalis.mobile.core.model.WalletAddress
 import com.finalis.mobile.core.model.WalletProfile
@@ -35,6 +36,11 @@ class AndroidSecureWalletStore(
         val publicKeyHex = runCatching { safePreferences.getString(KeyPublicKeyHex, null) }.getOrNull().orEmpty()
         val label = runCatching { safePreferences.getString(KeyLabel, null) }.getOrNull() ?: "Primary wallet"
         val importedAt = runCatching { safePreferences.getLong(KeyImportedAtEpochMillis, 0L) }.getOrDefault(0L)
+        val storedNetworkName = runCatching { safePreferences.getString(KeyNetworkName, null) }.getOrNull()
+        // Records written before network selection existed carry no network name and are mainnet.
+        val network = FinalisNetwork.fromName(storedNetworkName)
+            ?: FinalisNetwork.fromAddress(address)
+            ?: FinalisNetwork.MAINNET
 
         return ImportedWalletRecord(
             privateKeyHex = privateKeyHex,
@@ -42,6 +48,7 @@ class AndroidSecureWalletStore(
                 address = WalletAddress(address),
                 publicKeyHex = publicKeyHex,
                 label = label,
+                network = network,
             ),
             importedAtEpochMillis = importedAt,
         )
@@ -54,7 +61,7 @@ class AndroidSecureWalletStore(
             .putString(KeyPublicKeyHex, record.walletProfile.publicKeyHex)
             .putString(KeyLabel, record.walletProfile.label)
             .putLong(KeyImportedAtEpochMillis, record.importedAtEpochMillis)
-            .remove(KeyNetworkName)
+            .putString(KeyNetworkName, record.walletProfile.network.name)
             .remove(KeyAddressHrp)
             .remove(KeyExpectedNetworkId)
             .remove(KeyExpectedGenesisHash)

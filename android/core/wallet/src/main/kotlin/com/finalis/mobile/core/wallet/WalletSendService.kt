@@ -40,6 +40,12 @@ class WalletSendService(
         )
         val totalInput = selected.sumOf { it.valueUnits }
         val rawChange = totalInput - target
+        val network = wallet.walletProfile.network
+        val recipientHrp = FinalisAddressCodec.decodeAddress(recipientAddress).hrp
+        require(recipientHrp == network.hrp) {
+            "Recipient address is not a Finalis ${network.name} address (expected ${network.hrp}1…)"
+        }
+        val chainDomain = FinalisTxCodec.chainDomain(network)
         val recipientScript = FinalisAddressCodec.scriptPubKeyHexFromAddress(recipientAddress)
         val changeScript = FinalisAddressCodec.scriptPubKeyHexFromAddress(wallet.walletProfile.address.value)
 
@@ -73,6 +79,7 @@ class WalletSendService(
         )
         val signedTx = FinalisTxCodec.signAllInputsP2PKH(
             tx = unsignedTx,
+            chainDomain = chainDomain,
             privateKeyHex = wallet.privateKeyHex,
             publicKeyHex = wallet.walletProfile.publicKeyHex,
         )

@@ -1,6 +1,7 @@
 package com.finalis.mobile.app
 
 import android.content.SharedPreferences
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.data.lightserver.LightserverDataException
 import com.finalis.mobile.data.lightserver.LightserverRpcException
 import kotlin.test.Test
@@ -17,14 +18,50 @@ class RpcSettingsRepositoryTest {
         val settings = repository.loadSettings()
         val expectedEndpoints = (listOf(BuildConfig.EXPLORER_BASE_URL) +
             RpcSettingsRepository.BUILTIN_FALLBACK_ENDPOINTS)
-            .map(::normalizeRpcUrl)
+            .map { normalizeRpcUrl(it, FinalisNetwork.MAINNET) }
             .distinct()
 
         assertEquals(
             expectedEndpoints.map(::RpcEndpoint),
             settings.savedEndpoints,
         )
-        assertEquals(RpcEndpoint(normalizeRpcUrl(BuildConfig.EXPLORER_BASE_URL)), settings.activeEndpoint)
+        assertEquals(RpcEndpoint(normalizeRpcUrl(BuildConfig.EXPLORER_BASE_URL, FinalisNetwork.MAINNET)), settings.activeEndpoint)
+        assertEquals(FinalisNetwork.MAINNET, settings.network)
+    }
+
+    @Test
+    fun `testnet selection uses the testnet lightserver rpc default`() {
+        val repository = RpcSettingsRepository(FakeSharedPreferences())
+        repository.setSelectedNetwork(FinalisNetwork.TESTNET)
+
+        val settings = repository.loadSettings()
+
+        assertEquals(FinalisNetwork.TESTNET, settings.network)
+        assertEquals(listOf(RpcEndpoint("http://130.61.126.39:19544/rpc")), settings.savedEndpoints)
+        assertEquals(RpcEndpoint("http://130.61.126.39:19544/rpc"), settings.activeEndpoint)
+    }
+
+    @Test
+    fun `endpoints are stored per network`() {
+        val preferences = FakeSharedPreferences()
+        val repository = RpcSettingsRepository(preferences)
+        repository.addEndpoint(RpcEndpoint("https://mainnet-explorer.example"))
+
+        repository.setSelectedNetwork(FinalisNetwork.TESTNET)
+        repository.addEndpoint(RpcEndpoint("http://testnet-node.example:19544/rpc"))
+        val testnet = repository.loadSettings()
+
+        assertEquals(RpcEndpoint("http://testnet-node.example:19544/rpc"), testnet.activeEndpoint)
+        assertTrue(testnet.savedEndpoints.none { it.url == "https://mainnet-explorer.example" })
+
+        repository.setSelectedNetwork(FinalisNetwork.MAINNET)
+        val mainnet = repository.loadSettings()
+
+        assertEquals(RpcEndpoint("https://mainnet-explorer.example"), mainnet.activeEndpoint)
+        assertTrue(mainnet.savedEndpoints.none { it.url.contains("testnet-node") })
+        // Selection survives a fresh repository instance.
+        repository.setSelectedNetwork(FinalisNetwork.TESTNET)
+        assertEquals(FinalisNetwork.TESTNET, RpcSettingsRepository(preferences).selectedNetwork())
     }
     @Test
     fun `load settings ignores malformed persisted endpoints`() {
@@ -41,7 +78,7 @@ class RpcSettingsRepositoryTest {
         val settings = repository.loadSettings()
         val expectedDefaults = (listOf(BuildConfig.EXPLORER_BASE_URL) +
             RpcSettingsRepository.BUILTIN_FALLBACK_ENDPOINTS)
-            .map(::normalizeRpcUrl)
+            .map { normalizeRpcUrl(it, FinalisNetwork.MAINNET) }
             .distinct()
 
         assertEquals(

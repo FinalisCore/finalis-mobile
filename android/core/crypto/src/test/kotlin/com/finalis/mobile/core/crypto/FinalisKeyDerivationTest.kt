@@ -47,4 +47,16 @@ class FinalisKeyDerivationTest {
         assertEquals("sc1adrqzotqb6xl76opjawtlcn5ds6msa6sqaw7dj7p", address)
         assertTrue(address.startsWith("sc1"))
     }
+
+    @Test
+    fun `derives testnet tsc address matching core address_from_pubkey`() {
+        val keyMaterial = FinalisKeyDerivation.deriveKeyMaterial(
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        )
+        val address = FinalisAddressCodec.deriveAddressFromPublicKey(keyMaterial.publicKeyHex, hrp = "tsc")
+
+        // finalis-cli address_from_pubkey --hrp tsc --pubkey 03a107bf…31b8
+        assertEquals("tsc1adrqzotqb6xl76opjawtlcn5ds6msa6sqdtecmte", address)
+        assertEquals("tsc", FinalisAddressCodec.decodeAddress(address).hrp)
+    }
 }

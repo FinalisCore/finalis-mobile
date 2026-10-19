@@ -12,7 +12,7 @@
 ## Build and environment checks
 
 - Confirm `./gradlew :app:assembleRelease -Pfinalis.useMockLightserver=false -Pfinalis.lightserverRpcUrl=https://host/rpc` works in a Java 17 environment.
-- Confirm the release build uses `android:usesCleartextTraffic="false"`.
+- Confirm cleartext HTTP is limited to the hosts in `app/src/main/res/xml/network_security_config.xml`.
 - Confirm the active build-time `finalis.lightserverRpcUrl` is a real HTTPS endpoint.
 - Confirm `finalis.useMockLightserver=false` for release artifacts.
 

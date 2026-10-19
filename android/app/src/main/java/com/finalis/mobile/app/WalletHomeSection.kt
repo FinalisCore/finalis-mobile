@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.dp
 import com.finalis.mobile.core.model.BalanceSnapshot
 import com.finalis.mobile.core.model.ImportedWalletRecord
 import com.finalis.mobile.core.model.NetworkIdentity
-import com.finalis.mobile.core.wallet.FinalisMainnet
+import com.finalis.mobile.core.model.FinalisNetwork
 
 @Composable
 fun StartupSection() {
@@ -84,6 +84,41 @@ fun WalletImportSection(
 }
 
 @Composable
+fun NetworkSelectionSection(
+    selectedNetwork: FinalisNetwork,
+    title: String,
+    subtitle: String,
+    enabled: Boolean,
+    onSelectNetwork: (FinalisNetwork) -> Unit,
+) {
+    WalletPanel(
+        title = title,
+        subtitle = subtitle,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FinalisNetwork.ALL.forEach { network ->
+                if (network == selectedNetwork) {
+                    Button(enabled = enabled, onClick = {}) { Text(network.displayName) }
+                } else {
+                    OutlinedButton(enabled = enabled, onClick = { onSelectNetwork(network) }) { Text(network.displayName) }
+                }
+            }
+        }
+        LabelValue(
+            label = "Address prefix",
+            value = "${selectedNetwork.hrp}1…",
+            monospace = true,
+        )
+        if (selectedNetwork.isTestnet) {
+            StatusChip(
+                text = "Testnet coins have no value.",
+                tone = StatusTone.Warning,
+            )
+        }
+    }
+}
+
+@Composable
 fun WalletIdentitySection(
     wallet: ImportedWalletRecord,
     onCopyAddress: () -> Unit,
@@ -103,18 +138,19 @@ fun WalletIdentitySection(
             onShare = onShareAddress,
         )
         SectionDivider()
+        val network = wallet.walletProfile.network
         LabelValue(
             label = "Network",
-            value = "${FinalisMainnet.EXPECTED_NETWORK_NAME} (${FinalisMainnet.EXPECTED_HRP})",
+            value = "${network.name} (${network.hrp})",
         )
         LabelValue(
             label = "Expected network id",
-            value = FinalisMainnet.EXPECTED_NETWORK_ID,
+            value = network.networkId,
             monospace = true,
         )
         LabelValue(
             label = "Expected genesis",
-            value = FinalisMainnet.EXPECTED_GENESIS_HASH,
+            value = network.genesisHash ?: "(not published yet)",
             monospace = true,
         )
         LabelValue(

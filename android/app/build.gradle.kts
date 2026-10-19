@@ -30,13 +30,8 @@ android {
     }
 
     buildTypes {
-        debug {
-            manifestPlaceholders["usesCleartextTraffic"] = "true"
-        }
         release {
-            // Mainnet operators currently expose HTTP endpoints on :18080/:19444.
-            // Keep release cleartext-enabled until HTTPS endpoints are mandatory.
-            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            // Cleartext HTTP is limited to known endpoint hosts by res/xml/network_security_config.xml.
             isMinifyEnabled = false
             isShrinkResources = false
         }

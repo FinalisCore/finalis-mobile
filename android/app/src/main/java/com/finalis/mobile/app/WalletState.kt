@@ -1,6 +1,7 @@
 package com.finalis.mobile.app
 
 import com.finalis.mobile.core.model.BalanceSnapshot
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.HistoryEntry
 import com.finalis.mobile.core.model.HistoryPageResult
 import com.finalis.mobile.core.model.NetworkIdentity
@@ -23,6 +24,7 @@ sealed interface DashboardState {
         val submitted: List<SubmittedTransactionRecord>,
         val mismatch: WalletNetworkMismatch,
         val lifecycleState: TransactionLifecycleState,
+        val expectedNetwork: FinalisNetwork = FinalisNetwork.MAINNET,
     ) : DashboardState
 
     data class Ready(
@@ -128,6 +130,7 @@ data class RpcEndpoint(
 data class RpcSettingsState(
     val savedEndpoints: List<RpcEndpoint> = emptyList(),
     val activeEndpoint: RpcEndpoint? = null,
+    val network: FinalisNetwork = FinalisNetwork.MAINNET,
     val inputValue: String = "",
     val message: String? = null,
 )

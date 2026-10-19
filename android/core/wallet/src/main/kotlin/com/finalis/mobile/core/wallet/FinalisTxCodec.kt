@@ -2,6 +2,7 @@ package com.finalis.mobile.core.wallet
 
 import com.finalis.mobile.core.crypto.FinalisKeyDerivation
 import com.finalis.mobile.core.crypto.toHex
+import com.finalis.mobile.core.model.FinalisNetwork
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 
@@ -32,7 +33,8 @@ data class ParsedWalletTx(
 )
 
 object FinalisTxCodec {
-    fun serializeTx(tx: WalletTx): ByteArray {
+    /** Core `Tx::serialize_without_hashcash`: the txid and sighash preimage. */
+    fun serializeTxWithoutHashcash(tx: WalletTx): ByteArray {
         val writer = TxWriter()
         writer.u32le(tx.version)
         writer.varint(tx.inputs.size.toLong())
@@ -51,21 +53,55 @@ object FinalisTxCodec {
         return writer.finish()
     }
 
-    fun txidHex(tx: WalletTx): String = sha256d(serializeTx(tx)).toHex()
+    /** Core `Tx::serialize` for a tx without a hashcash stamp (trailing marker byte 0). */
+    fun serializeTx(tx: WalletTx): ByteArray = serializeTxWithoutHashcash(tx) + byteArrayOf(0)
 
-    fun signingMessageForInput(tx: WalletTx, inputIndex: Int): ByteArray {
-        require(inputIndex in tx.inputs.indices) { "Input index out of range" }
-        val txCopy = tx.copy(inputs = tx.inputs.map { it.copy(scriptSigHex = "") })
-        val txHash = sha256d(serializeTx(txCopy))
+    fun txidHex(tx: WalletTx): String = sha256d(serializeTxWithoutHashcash(tx)).toHex()
+
+    /** Core `chain_domain_from_ids`: sha256d("SC-CHAIN-DOMAIN-V1" || network_id[16] || genesis_hash[32]). */
+    fun chainDomain(networkIdHex: String, genesisHashHex: String): ByteArray {
+        val networkId = networkIdHex.hexToBytes()
+        require(networkId.size == 16) { "networkId must be 16 bytes hex" }
         val writer = TxWriter()
-        writer.bytes("SC-SIG-V0".toByteArray(Charsets.UTF_8))
+        writer.bytes("SC-CHAIN-DOMAIN-V1".toByteArray(Charsets.UTF_8))
+        writer.bytes(networkId)
+        writer.bytes(normalizeHex32(genesisHashHex, "genesisHash"))
+        return sha256d(writer.finish())
+    }
+
+    fun chainDomain(network: FinalisNetwork): ByteArray {
+        val genesisHash = network.genesisHash
+            ?: throw IllegalStateException(
+                "Finalis ${network.name} genesis hash is not published yet; transactions cannot be signed for it.",
+            )
+        return chainDomain(network.networkId, genesisHash)
+    }
+
+    /**
+     * Core `signing_message_for_input`:
+     * sha256d("SC-SIG-V1" || chain_domain[32] || u32le(input_index) || sha256d(tx without hashcash, script_sigs cleared)).
+     */
+    fun signingMessageForInput(tx: WalletTx, inputIndex: Int, chainDomain: ByteArray): ByteArray {
+        require(inputIndex in tx.inputs.indices) { "Input index out of range" }
+        require(chainDomain.size == 32) { "Chain domain must be 32 bytes" }
+        val txCopy = tx.copy(inputs = tx.inputs.map { it.copy(scriptSigHex = "") })
+        val txHash = sha256d(serializeTxWithoutHashcash(txCopy))
+        val writer = TxWriter()
+        writer.bytes("SC-SIG-V1".toByteArray(Charsets.UTF_8))
+        writer.bytes(chainDomain)
         writer.u32le(inputIndex)
         writer.bytes(txHash)
         return sha256d(writer.finish())
     }
 
-    fun signInputP2PKH(tx: WalletTx, inputIndex: Int, privateKeyHex: String, publicKeyHex: String): WalletTx {
-        val signature = FinalisKeyDerivation.signEd25519(signingMessageForInput(tx, inputIndex), privateKeyHex)
+    fun signInputP2PKH(
+        tx: WalletTx,
+        inputIndex: Int,
+        chainDomain: ByteArray,
+        privateKeyHex: String,
+        publicKeyHex: String,
+    ): WalletTx {
+        val signature = FinalisKeyDerivation.signEd25519(signingMessageForInput(tx, inputIndex, chainDomain), privateKeyHex)
         val publicKey = publicKeyHex.hexToBytes()
         require(publicKey.size == 32) { "Public key must be 32 bytes hex" }
         val scriptSig = TxWriter()
@@ -80,10 +116,10 @@ object FinalisTxCodec {
         return tx.copy(inputs = updatedInputs)
     }
 
-    fun signAllInputsP2PKH(tx: WalletTx, privateKeyHex: String, publicKeyHex: String): WalletTx {
+    fun signAllInputsP2PKH(tx: WalletTx, chainDomain: ByteArray, privateKeyHex: String, publicKeyHex: String): WalletTx {
         var signed = tx
         for (index in tx.inputs.indices) {
-            signed = signInputP2PKH(signed, index, privateKeyHex, publicKeyHex)
+            signed = signInputP2PKH(signed, index, chainDomain, privateKeyHex, publicKeyHex)
         }
         return signed
     }
@@ -178,17 +214,22 @@ private class TxReader(
         return value
     }
 
+    // Core codec varint: minimal unsigned LEB128 (src/codec/varint.cpp).
     fun varint(): Long {
-        return when (val prefix = u8()) {
-            in 0..0xfc -> prefix.toLong()
-            0xfd -> {
-                val chunk = bytes(2)
-                ((chunk[0].toInt() and 0xff) or ((chunk[1].toInt() and 0xff) shl 8)).toLong()
+        var result = 0L
+        var shift = 0
+        while (shift <= 63) {
+            val byte = u8()
+            val chunk = (byte and 0x7f).toLong()
+            require(!(shift == 63 && chunk > 1)) { "varint overflow" }
+            result = result or (chunk shl shift)
+            if (byte and 0x80 == 0) {
+                require(byte != 0 || shift == 0) { "non-minimal varint" }
+                return result
             }
-
-            0xfe -> u32le().toLong() and 0xffff_ffffL
-            else -> u64le()
+            shift += 7
         }
+        throw IllegalArgumentException("varint overflow")
     }
 
     fun varbytes(): ByteArray = bytes(varint().toInt())
@@ -220,27 +261,17 @@ private class TxWriter {
         return this
     }
 
+    // Core codec varint: unsigned LEB128 (src/codec/varint.cpp).
     fun varint(value: Long): TxWriter {
         require(value >= 0) { "varint must be non-negative" }
-        return when {
-            value < 0xfd -> u8(value.toInt())
-            value <= 0xffff -> {
-                u8(0xfd)
-                out.write((value and 0xff).toInt())
-                out.write(((value ushr 8) and 0xff).toInt())
-                this
-            }
-
-            value <= 0xffff_ffffL -> {
-                u8(0xfe)
-                u32le(value.toInt())
-            }
-
-            else -> {
-                u8(0xff)
-                u64le(value)
-            }
-        }
+        var remaining = value
+        do {
+            var byte = (remaining and 0x7f).toInt()
+            remaining = remaining ushr 7
+            if (remaining != 0L) byte = byte or 0x80
+            out.write(byte)
+        } while (remaining != 0L)
+        return this
     }
 
     fun bytes(bytes: ByteArray): TxWriter {

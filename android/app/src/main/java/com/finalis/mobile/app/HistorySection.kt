@@ -19,7 +19,7 @@ import com.finalis.mobile.core.model.NetworkIdentity
 import com.finalis.mobile.core.model.TxDetail
 import com.finalis.mobile.core.model.TxDirection
 import com.finalis.mobile.core.wallet.NetworkMismatch as WalletNetworkMismatch
-import com.finalis.mobile.core.wallet.FinalisMainnet
+import com.finalis.mobile.core.model.FinalisNetwork
 
 @Composable
 fun FinalizedStateLoadingSection() {
@@ -58,15 +58,16 @@ fun ReadErrorSection(
 fun NetworkMismatchSection(
     status: NetworkIdentity,
     mismatch: WalletNetworkMismatch,
+    expectedNetwork: FinalisNetwork,
 ) {
     WalletPanel(
         title = "Invalid network endpoint",
-        subtitle = "This app only supports Finalis mainnet. Reads and sending stay blocked until the endpoint matches mainnet.",
+        subtitle = "This wallet is on Finalis ${expectedNetwork.name}. Reads and sending stay blocked until the endpoint matches ${expectedNetwork.name}.",
         tonal = true,
     ) {
         EmptyStateBlock(
             title = "Invalid network endpoint",
-            detail = "Switch to a published Finalis mainnet lightserver before refreshing balance, history, or sending funds.",
+            detail = "Switch to a published Finalis ${expectedNetwork.name} lightserver before refreshing balance, history, or sending funds.",
             tone = StatusTone.Warning,
         )
         ValueRow(
@@ -79,10 +80,10 @@ fun NetworkMismatchSection(
         LabelValue(label = "Endpoint network id", value = status.networkId ?: "(not provided)", monospace = true)
         LabelValue(label = "Endpoint genesis", value = status.genesisHash ?: "(not provided)", monospace = true)
         SectionDivider()
-        LabelValue(label = "Required network", value = FinalisMainnet.EXPECTED_NETWORK_NAME)
-        LabelValue(label = "Required HRP", value = FinalisMainnet.EXPECTED_HRP, monospace = true)
-        LabelValue(label = "Required network id", value = FinalisMainnet.EXPECTED_NETWORK_ID, monospace = true)
-        LabelValue(label = "Required genesis", value = FinalisMainnet.EXPECTED_GENESIS_HASH, monospace = true)
+        LabelValue(label = "Required network", value = expectedNetwork.name)
+        LabelValue(label = "Required HRP", value = expectedNetwork.hrp, monospace = true)
+        LabelValue(label = "Required network id", value = expectedNetwork.networkId, monospace = true)
+        LabelValue(label = "Required genesis", value = expectedNetwork.genesisHash ?: "(not published yet)", monospace = true)
     }
 }
 

@@ -3,6 +3,7 @@ package com.finalis.mobile.app
 import com.finalis.mobile.core.model.AddressValidationResult
 import com.finalis.mobile.core.model.BalanceSnapshot
 import com.finalis.mobile.core.model.BroadcastResult
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.HistoryEntry
 import com.finalis.mobile.core.model.HistoryPageResult
 import com.finalis.mobile.core.model.NetworkIdentity
@@ -24,11 +25,11 @@ class RuntimeLightserverRepositoryTest {
     fun `normalize endpoint url accepts explorer base urls`() {
         assertEquals(
             "https://lightserver.finalis.org",
-            normalizeRpcUrl("https://lightserver.finalis.org"),
+            normalizeRpcUrl("https://lightserver.finalis.org", FinalisNetwork.MAINNET),
         )
         assertEquals(
             "http://127.0.0.1:18080",
-            normalizeRpcUrl("http://127.0.0.1:19444/"),
+            normalizeRpcUrl("http://127.0.0.1:19444/", FinalisNetwork.MAINNET),
         )
     }
 
@@ -37,17 +38,17 @@ class RuntimeLightserverRepositoryTest {
         // Port 19444/rpc → port 18080
         assertEquals(
             "http://127.0.0.1:18080",
-            normalizeRpcUrl("http://127.0.0.1:19444/rpc"),
+            normalizeRpcUrl("http://127.0.0.1:19444/rpc", FinalisNetwork.MAINNET),
         )
         // Non-19444 rpc path → strip /rpc, keep port
         assertEquals(
             "https://lightserver.finalis.org",
-            normalizeRpcUrl("https://lightserver.finalis.org/rpc"),
+            normalizeRpcUrl("https://lightserver.finalis.org/rpc", FinalisNetwork.MAINNET),
         )
         // Full API paths should be normalized to base explorer endpoint
         assertEquals(
             "http://64.23.244.126:18080",
-            normalizeRpcUrl("http://64.23.244.126:18080/api/status"),
+            normalizeRpcUrl("http://64.23.244.126:18080/api/status", FinalisNetwork.MAINNET),
         )
     }
 
@@ -63,7 +64,7 @@ class RuntimeLightserverRepositoryTest {
         )
         val repository = RuntimeLightserverRepository(
             endpointSettingsStore = store,
-            repositoryFactory = { endpoint ->
+            repositoryFactory = { endpoint, _ ->
                 when (endpoint.url) {
                     unavailable.url -> FakeLightserverRepository(
                         statusError = LightserverDataException("Lightserver unavailable"),
@@ -103,7 +104,7 @@ class RuntimeLightserverRepositoryTest {
         )
         val repository = RuntimeLightserverRepository(
             endpointSettingsStore = store,
-            repositoryFactory = { endpoint ->
+            repositoryFactory = { endpoint, _ ->
                 when (endpoint.url) {
                     wrong.url -> FakeLightserverRepository(
                         status = sampleStatus(networkId = "wrong-network"),
@@ -144,7 +145,7 @@ class RuntimeLightserverRepositoryTest {
         )
         val repository = RuntimeLightserverRepository(
             endpointSettingsStore = store,
-            repositoryFactory = {
+            repositoryFactory = { _, _ ->
                 FakeLightserverRepository(
                     status = sampleStatus(networkId = "wrong-network"),
                 )
@@ -157,6 +158,71 @@ class RuntimeLightserverRepositoryTest {
     }
 }
 
+class RuntimeLightserverRepositoryTestnetTest {
+    @Test
+    fun `testnet endpoint urls keep the lightserver rpc path`() {
+        assertEquals(
+            "http://130.61.126.39:19544/rpc",
+            normalizeRpcUrl("http://130.61.126.39:19544/rpc/", FinalisNetwork.TESTNET),
+        )
+        assertEquals(
+            "http://130.61.126.39:19544/rpc",
+            normalizeRpcUrl("http://130.61.126.39:19544", FinalisNetwork.TESTNET),
+        )
+    }
+
+    @Test
+    fun `testnet store validates endpoints against testnet and passes the network to the factory`() = runBlocking {
+        val endpoint = RpcEndpoint("http://130.61.126.39:19544/rpc")
+        val store = FakeRpcEndpointSettingsStore(
+            PersistedRpcSettings(
+                savedEndpoints = listOf(endpoint),
+                activeEndpoint = endpoint,
+                network = FinalisNetwork.TESTNET,
+            ),
+        )
+        val seenNetworks = mutableListOf<FinalisNetwork>()
+        val repository = RuntimeLightserverRepository(
+            endpointSettingsStore = store,
+            repositoryFactory = { _, network ->
+                seenNetworks += network
+                FakeLightserverRepository(
+                    status = sampleStatus(FinalisNetwork.TESTNET),
+                    balance = BalanceSnapshot(
+                        address = WalletAddress("tsc1test"),
+                        confirmedUnits = 7L,
+                        asset = "FINALIS",
+                        tipHeight = 99,
+                        tipHash = "abcd",
+                    ),
+                )
+            },
+        )
+
+        assertEquals(7L, repository.loadBalance("tsc1test").confirmedUnits)
+        assertTrue(seenNetworks.isNotEmpty() && seenNetworks.all { it == FinalisNetwork.TESTNET })
+    }
+
+    @Test
+    fun `mainnet endpoint is rejected for a testnet wallet`() = runBlocking {
+        val endpoint = RpcEndpoint("https://mainnet.example")
+        val store = FakeRpcEndpointSettingsStore(
+            PersistedRpcSettings(
+                savedEndpoints = listOf(endpoint),
+                activeEndpoint = endpoint,
+                network = FinalisNetwork.TESTNET,
+            ),
+        )
+        val repository = RuntimeLightserverRepository(
+            endpointSettingsStore = store,
+            repositoryFactory = { _, _ -> FakeLightserverRepository(status = sampleStatus(FinalisNetwork.MAINNET)) },
+        )
+
+        val error = assertFailsWith<LightserverDataException> { repository.loadBalance("tsc1test") }
+        assertTrue(error.message.orEmpty().contains("testnet"))
+    }
+}
+
 private class FakeRpcEndpointSettingsStore(
     var settings: PersistedRpcSettings,
 ) : RpcEndpointSettingsStore {
@@ -166,6 +232,7 @@ private class FakeRpcEndpointSettingsStore(
         settings = PersistedRpcSettings(
             savedEndpoints = listOf(endpoint) + settings.savedEndpoints.filterNot { it.url == endpoint.url },
             activeEndpoint = endpoint,
+            network = settings.network,
         )
     }
 }
@@ -218,14 +285,15 @@ private class FakeLightserverRepository(
 }
 
 private fun sampleStatus(
-    networkId: String = com.finalis.mobile.core.wallet.FinalisMainnet.EXPECTED_NETWORK_ID,
+    network: FinalisNetwork = FinalisNetwork.MAINNET,
+    networkId: String = network.networkId,
 ): NetworkIdentity =
     NetworkIdentity(
-        name = com.finalis.mobile.core.wallet.FinalisMainnet.EXPECTED_NETWORK_NAME,
+        name = network.name,
         networkId = networkId,
         protocolVersion = 1,
         featureFlags = 1L,
-        genesisHash = com.finalis.mobile.core.wallet.FinalisMainnet.EXPECTED_GENESIS_HASH,
+        genesisHash = network.genesisHash,
         tipHeight = 99,
         tipHash = "abcd",
         serverTruth = "finalized_only",

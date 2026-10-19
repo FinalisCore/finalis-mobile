@@ -1,5 +1,6 @@
 package com.finalis.mobile.core.wallet
 
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.ImportedWalletRecord
 import com.finalis.mobile.core.model.SubmittedTransactionRecord
 import com.finalis.mobile.core.storage.SubmittedTransactionStore
@@ -19,6 +20,7 @@ class WalletSafetyManagerTest {
 
         sessionManager.importAndPersist(
             privateKeyHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+            network = FinalisNetwork.TESTNET,
         )
         submittedStore.save(
             SubmittedTransactionRecord(

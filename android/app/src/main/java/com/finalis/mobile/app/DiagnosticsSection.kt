@@ -19,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import com.finalis.mobile.core.wallet.FinalisMainnet
 import com.finalis.mobile.core.wallet.WalletSendService
 import com.finalis.mobile.data.lightserver.rpcUrlFromExplorerUrl
 

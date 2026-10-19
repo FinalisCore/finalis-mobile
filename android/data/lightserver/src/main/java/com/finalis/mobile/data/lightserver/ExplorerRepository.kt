@@ -3,6 +3,8 @@ package com.finalis.mobile.data.lightserver
 import com.finalis.mobile.core.model.AddressValidationResult
 import com.finalis.mobile.core.model.BalanceSnapshot
 import com.finalis.mobile.core.model.BroadcastResult
+import com.finalis.mobile.core.model.EndpointKind
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.HistoryEntry
 import com.finalis.mobile.core.model.HistoryPageResult
 import com.finalis.mobile.core.model.NetworkIdentity
@@ -11,7 +13,6 @@ import com.finalis.mobile.core.model.TxDirection
 import com.finalis.mobile.core.model.TxStatus
 import com.finalis.mobile.core.model.WalletAddress
 import com.finalis.mobile.core.model.WalletUtxo
-import com.finalis.mobile.core.wallet.FinalisMainnet
 import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
@@ -33,6 +34,7 @@ import kotlinx.serialization.json.Json
 class ExplorerRepository(
     private val explorerBaseUrl: String,
     private val lightserverRpcUrl: String,
+    private val network: FinalisNetwork,
 ) : LightserverRepository {
     companion object {
         private const val STATUS_CACHE_TTL_MS = 5_000L
@@ -74,7 +76,7 @@ class ExplorerRepository(
                 "Explorer is not in finalized-only mode (finalized_only was false)",
             )
         }
-        if (status.network != FinalisMainnet.EXPECTED_NETWORK_NAME) {
+        if (status.network != network.name) {
             throw LightserverBackendIncompatibleException(
                 "Explorer reports unexpected network: ${status.network}",
             )
@@ -127,7 +129,7 @@ class ExplorerRepository(
     // ── Address validation (local — explorer has no validate_address) ─────────
 
     override suspend fun validateAddress(address: String): AddressValidationResult =
-        validateAddressLocally(address)
+        validateAddressLocally(address, network)
 
     // ── Balance ──────────────────────────────────────────────────────────────
 
@@ -336,7 +338,7 @@ class ExplorerRepository(
     }
 
     private fun requireValidAddress(address: String): AddressValidationResult {
-        val result = validateAddressLocally(address)
+        val result = validateAddressLocally(address, network)
         if (!result.valid) {
             throw LightserverAddressException(result.error ?: "Address is invalid", wrongNetwork = false)
         }
@@ -425,6 +427,32 @@ fun normalizeExplorerUrl(rawUrl: String): String {
 }
 
 /**
+ * Normalises a user-supplied URL as a lightserver JSON-RPC URL. A bare host (or an explorer
+ * `/api/...` path) gets the `/rpc` path; any other path is kept.
+ */
+fun normalizeLightserverRpcUrl(rawUrl: String): String {
+    val trimmed = rawUrl.trim()
+    require(trimmed.isNotEmpty()) { "Endpoint URL is required" }
+    val parsed = try {
+        URI(trimmed)
+    } catch (error: Exception) {
+        throw IllegalArgumentException("Endpoint URL is invalid", error)
+    }
+    val scheme = parsed.scheme?.lowercase()
+    require(scheme == "http" || scheme == "https") { "Endpoint URL must start with http:// or https://" }
+    require(!parsed.host.isNullOrBlank()) { "Endpoint URL must include a host" }
+    val normalizedPath = parsed.path.orEmpty().trimEnd('/')
+    val rpcPath = if (normalizedPath.isEmpty() || normalizedPath.startsWith("/api/")) "/rpc" else normalizedPath
+    return URI(scheme, parsed.userInfo, parsed.host, parsed.port, rpcPath, null, null).toString()
+}
+
+fun normalizeEndpointUrl(rawUrl: String, network: FinalisNetwork): String =
+    when (network.endpointKind) {
+        EndpointKind.EXPLORER -> normalizeExplorerUrl(rawUrl)
+        EndpointKind.LIGHTSERVER_RPC -> normalizeLightserverRpcUrl(rawUrl)
+    }
+
+/**
  * Derives the lightserver JSON-RPC URL from an explorer base URL by convention:
  * port 18080 → port 19444, path "/rpc".
  */
@@ -436,7 +464,7 @@ fun rpcUrlFromExplorerUrl(explorerUrl: String): String {
 
 // ── Local address validation (Finalis bech32 / P2PKH) ────────────────────────
 
-internal fun validateAddressLocally(address: String): AddressValidationResult {
+internal fun validateAddressLocally(address: String, network: FinalisNetwork): AddressValidationResult {
     val trimmed = address.trim().lowercase()
     if (trimmed.isBlank()) {
         return AddressValidationResult(valid = false, error = "Address is empty")
@@ -473,14 +501,13 @@ internal fun validateAddressLocally(address: String): AddressValidationResult {
         byteArrayOf(0x88.toByte(), 0xac.toByte())
     val scriptPubKeyHex = scriptPubKey.toHex()
     val scriptHashHex = MessageDigest.getInstance("SHA-256").digest(scriptPubKey).toHex()
-    val isMainnet = hrp == FinalisMainnet.EXPECTED_HRP
     return AddressValidationResult(
         valid = true,
         normalizedAddress = trimmed,
         hrp = hrp,
         networkHint = hrp,
-        serverNetworkHrp = FinalisMainnet.EXPECTED_HRP,
-        serverNetworkMatch = isMainnet,
+        serverNetworkHrp = network.hrp,
+        serverNetworkMatch = hrp == network.hrp,
         addressType = "p2pkh",
         pubkeyHashHex = pubkeyHashHex,
         scriptPubKeyHex = scriptPubKeyHex,

@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.wallet.SubmittedTransactionManager
 import com.finalis.mobile.core.wallet.WalletSafetyManager
 import com.finalis.mobile.core.wallet.WalletSendService
@@ -129,7 +130,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Scaffold(
-                    topBar = { WalletTopBar() },
+                    topBar = { WalletTopBar(network = walletViewModel.activeNetwork) },
                     bottomBar = {
                         if (walletViewModel.startupChecked && walletViewModel.walletRecord != null) {
                             WalletBottomBar(
@@ -175,6 +176,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onRemoveEndpoint = walletViewModel::removeRpcEndpoint,
+                                selectedNetwork = walletViewModel.activeNetwork,
+                                onSelectNetwork = { network ->
+                                    scope.launch {
+                                        walletViewModel.selectOnboardingNetwork(network)
+                                    }
+                                },
                             )
                         } else {
                             val currentWallet = walletViewModel.walletRecord!!
@@ -289,6 +296,17 @@ class MainActivity : ComponentActivity() {
                                         historyViewModel.bind(walletViewModel.readState)
                                     }
                                 },
+                                onSwitchNetwork = { network ->
+                                    scope.launch {
+                                        sendViewModel.clearAllState()
+                                        historyViewModel.clear()
+                                        val rebound = walletViewModel.switchNetwork(network)
+                                        historyViewModel.bind(walletViewModel.readState)
+                                        if (rebound != null) {
+                                            walletViewModel.startSubmittedPolling(scope, rebound)
+                                        }
+                                    }
+                                },
                             )
                         }
                     }
@@ -313,6 +331,8 @@ private fun WalletStartupContent(
     onAddEndpoint: () -> Unit,
     onSelectEndpoint: (RpcEndpoint) -> Unit,
     onRemoveEndpoint: (RpcEndpoint) -> Unit,
+    selectedNetwork: FinalisNetwork,
+    onSelectNetwork: (FinalisNetwork) -> Unit,
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -322,7 +342,7 @@ private fun WalletStartupContent(
         item {
             BrandHeroCard(
                 mode = if (BuildConfig.USE_MOCK_LIGHTSERVER) "Mock Lightserver" else "Runtime Lightserver",
-                networkLabel = "${com.finalis.mobile.core.wallet.FinalisMainnet.EXPECTED_NETWORK_NAME} / ${com.finalis.mobile.core.wallet.FinalisMainnet.EXPECTED_HRP}",
+                networkLabel = "${selectedNetwork.name} / ${selectedNetwork.hrp}",
                 defaultFeeUnits = WalletSendService.DEFAULT_FEE_UNITS,
             )
         }
@@ -336,6 +356,15 @@ private fun WalletStartupContent(
                 StartupSection()
             }
         } else {
+            item {
+                NetworkSelectionSection(
+                    selectedNetwork = selectedNetwork,
+                    title = "Network",
+                    subtitle = "The imported wallet is bound to this network and uses its address prefix.",
+                    enabled = !isImporting,
+                    onSelectNetwork = onSelectNetwork,
+                )
+            }
             item {
                 WalletImportSection(
                     importPrivateKeyHex = importPrivateKeyHex,

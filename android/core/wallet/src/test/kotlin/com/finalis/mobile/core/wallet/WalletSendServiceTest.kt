@@ -1,5 +1,6 @@
 package com.finalis.mobile.core.wallet
 
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.ImportedWalletRecord
 import com.finalis.mobile.core.model.SubmittedTransactionRecord
 import com.finalis.mobile.core.model.WalletAddress
@@ -17,12 +18,16 @@ class WalletSendServiceTest {
         walletProfile = WalletProfile(
             address = WalletAddress("tsc1adrqzotqb6xl76opjawtlcn5ds6msa6sqdtecmte"),
             publicKeyHex = "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+            network = FinalisNetwork.TESTNET,
         ),
         importedAtEpochMillis = 0L,
     )
 
     @Test
-    fun `builds and signs tx matching core vector`() {
+    fun `builds and signs testnet tx matching core build_p2pkh_tx`() {
+        // finalis-cli build_p2pkh_tx --testnet --prev-txid 11…11 --prev-index 1 --prev-value 1000000
+        //   --from-privkey 000102…1f --to-address tsc1addeqodb… --amount 250000 --fee 1000
+        //   --change-address tsc1adrqzotq… --genesis-hash 5cabf22b…f7a0
         val service = WalletSendService()
         val tx = service.buildAndSignTransaction(
             wallet = wallet,
@@ -40,13 +45,48 @@ class WalletSendServiceTest {
             requestedFeeUnits = 1_000L,
         )
 
-        assertEquals("a8e2567f937a31429e50311bfb0c1b539c45a985f473b1bf8aedbfb7b635e9b6", tx.txid)
+        assertEquals("110ea5fb70e5499b8830e6c5f1efd5c543178d8518a35dca5446ac25ecf6737a", tx.txid)
         assertEquals(
-            "01000000011111111111111111111111111111111111111111111111111111111111111111010000006240aa34462252e03624e736ed838d89ff31bc2fe48dbfe0f357d1b887e1f025f13549816dc2c4228e79595ecdb81e9d5ee0a904d1dc93b95ca9586f7d1a3f86ea0d2003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8ffffffff0290d00300000000001976a914c6483861d53cd667df6d21320d58e3593180e1b388acc86d0b00000000001976a914e30cba700faebff9cf482d3589bd1cbcc903d28088ac00000000",
+            "01000000011111111111111111111111111111111111111111111111111111111111111111010000006240ad94a8ebb5e3ddf46f125eba8771d828bc8335f214b1c8bb77e724bee00a06c51afbfff7e43f68e7d1eba757b876d74631bf763ba77577e7c7f0ec0db874020a2003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8ffffffff0290d00300000000001976a914c6483861d53cd667df6d21320d58e3593180e1b388acc86d0b00000000001976a914e30cba700faebff9cf482d3589bd1cbcc903d28088ac0000000000",
             tx.txHex,
         )
         assertEquals(749_000L, tx.changeUnits)
         assertEquals(1_000L, tx.appliedFeeUnits)
+    }
+
+    @Test
+    fun `rejects recipient from another network`() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            WalletSendService().buildAndSignTransaction(
+                wallet = wallet,
+                spendableUtxos = listOf(
+                    WalletUtxo("1".repeat(64), 0, 1_000_000L, 100L, "76a914e30cba700faebff9cf482d3589bd1cbcc903d28088ac"),
+                ),
+                recipientAddress = "sc1adrqzotqb6xl76opjawtlcn5ds6msa6sqaw7dj7p",
+                amountUnits = 10_000L,
+            )
+        }
+        kotlin.test.assertTrue(error.message.orEmpty().contains("testnet"))
+    }
+
+    @Test
+    fun `refuses to sign mainnet sends until mainnet genesis is published`() {
+        val mainnetWallet = wallet.copy(
+            walletProfile = wallet.walletProfile.copy(
+                address = WalletAddress("sc1adrqzotqb6xl76opjawtlcn5ds6msa6sqaw7dj7p"),
+                network = FinalisNetwork.MAINNET,
+            ),
+        )
+        assertFailsWith<IllegalStateException> {
+            WalletSendService().buildAndSignTransaction(
+                wallet = mainnetWallet,
+                spendableUtxos = listOf(
+                    WalletUtxo("1".repeat(64), 0, 1_000_000L, 100L, "76a914e30cba700faebff9cf482d3589bd1cbcc903d28088ac"),
+                ),
+                recipientAddress = "sc1adrqzotqb6xl76opjawtlcn5ds6msa6sqaw7dj7p",
+                amountUnits = 10_000L,
+            )
+        }
     }
 
     @Test

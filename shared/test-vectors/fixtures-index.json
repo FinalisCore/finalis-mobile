@@ -9,6 +9,7 @@
     "fixtures/history",
     "fixtures/proofs",
     "fixtures/tx",
-    "fixtures/wallet"
+    "fixtures/wallet",
+    "test-vectors/tx/sighash-v1-testnet.json"
   ]
 }

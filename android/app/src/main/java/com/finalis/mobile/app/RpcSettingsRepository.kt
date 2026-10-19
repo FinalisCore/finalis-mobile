@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import com.finalis.mobile.core.model.AddressValidationResult
 import com.finalis.mobile.core.model.BalanceSnapshot
 import com.finalis.mobile.core.model.BroadcastResult
+import com.finalis.mobile.core.model.EndpointKind
+import com.finalis.mobile.core.model.FinalisNetwork
 import com.finalis.mobile.core.model.HistoryEntry
 import com.finalis.mobile.core.model.HistoryPageResult
 import com.finalis.mobile.core.model.NetworkIdentity
@@ -17,14 +19,17 @@ import com.finalis.mobile.data.lightserver.LightserverBackendIncompatibleExcepti
 import com.finalis.mobile.data.lightserver.LightserverDataException
 import com.finalis.mobile.data.lightserver.LightserverRepository
 import com.finalis.mobile.data.lightserver.LightserverRpcException
+import com.finalis.mobile.data.lightserver.LiveLightserverRepository
 import com.finalis.mobile.data.lightserver.MockLightserverRepository
+import com.finalis.mobile.data.lightserver.UrlConnectionLightserverTransport
 import com.finalis.mobile.data.lightserver.UtxoDiagnosticsSnapshot
-import com.finalis.mobile.data.lightserver.normalizeExplorerUrl
+import com.finalis.mobile.data.lightserver.normalizeEndpointUrl
 import com.finalis.mobile.data.lightserver.rpcUrlFromExplorerUrl
 
 data class PersistedRpcSettings(
     val savedEndpoints: List<RpcEndpoint>,
     val activeEndpoint: RpcEndpoint?,
+    val network: FinalisNetwork = FinalisNetwork.MAINNET,
 ) {
     fun orderedEndpoints(): List<RpcEndpoint> {
         val active = activeEndpoint
@@ -49,21 +54,36 @@ class RpcSettingsRepository(
     ) : this(
         context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE),
     )
+    /** The network the wallet (or onboarding, before a wallet exists) is bound to. */
+    fun selectedNetwork(): FinalisNetwork =
+        FinalisNetwork.fromName(preferences.getString(KEY_SELECTED_NETWORK, null)) ?: FinalisNetwork.MAINNET
+
+    fun setSelectedNetwork(network: FinalisNetwork) {
+        val committed = preferences.edit()
+            .putString(KEY_SELECTED_NETWORK, network.name)
+            .commit()
+        check(committed) { "Failed to persist selected network" }
+    }
+
     override fun loadSettings(): PersistedRpcSettings {
+        val network = selectedNetwork()
         if (BuildConfig.USE_MOCK_LIGHTSERVER) {
             return PersistedRpcSettings(
                 savedEndpoints = emptyList(),
                 activeEndpoint = null,
+                network = network,
             )
         }
-        val defaultEndpoints = defaultRpcEndpoints()
-        val savedEndpoints = (parseEndpoints(preferences.getString(KEY_ENDPOINTS, null)) + defaultEndpoints)
+        val defaultEndpoints = defaultRpcEndpoints(network)
+        val keys = EndpointKeys.forNetwork(network)
+        val savedEndpoints = (parseEndpoints(preferences.getString(keys.endpoints, null), network) + defaultEndpoints)
             .distinctBy { it.url }
-        val activeUrl = preferences.getString(KEY_ACTIVE_ENDPOINT, null)
+        val activeUrl = preferences.getString(keys.activeEndpoint, null)
         val activeEndpoint = savedEndpoints.firstOrNull { it.url == activeUrl } ?: savedEndpoints.firstOrNull()
         val settings = PersistedRpcSettings(
             savedEndpoints = savedEndpoints,
             activeEndpoint = activeEndpoint,
+            network = network,
         )
         return settings
     }
@@ -76,6 +96,7 @@ class RpcSettingsRepository(
         return RpcSettingsState(
             savedEndpoints = settings.savedEndpoints,
             activeEndpoint = settings.activeEndpoint,
+            network = settings.network,
             inputValue = inputValue,
             message = message,
         )
@@ -117,56 +138,70 @@ class RpcSettingsRepository(
         savedEndpoints: List<RpcEndpoint>,
         activeEndpoint: RpcEndpoint?,
     ) {
+        val keys = EndpointKeys.forNetwork(selectedNetwork())
         val committed = preferences.edit()
-            .putString(KEY_ENDPOINTS, savedEndpoints.joinToString(separator = "\n") { it.url })
-            .putString(KEY_ACTIVE_ENDPOINT, activeEndpoint?.url)
+            .putString(keys.endpoints, savedEndpoints.joinToString(separator = "\n") { it.url })
+            .putString(keys.activeEndpoint, activeEndpoint?.url)
             .commit()
         check(committed) { "Failed to persist RPC settings" }
     }
 
-    private fun parseEndpoints(raw: String?): List<RpcEndpoint> =
+    private fun parseEndpoints(raw: String?, network: FinalisNetwork): List<RpcEndpoint> =
         raw.orEmpty()
             .lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .mapNotNull { candidate ->
-                runCatching { RpcEndpoint(normalizeExplorerUrl(candidate)) }.getOrNull()
+                runCatching { RpcEndpoint(normalizeEndpointUrl(candidate, network)) }.getOrNull()
             }
             .distinctBy { it.url }
             .toList()
 
+    // Endpoints are kept per network so switching never probes one network's endpoints for the other.
+    // Mainnet keeps the original keys so existing endpoint settings carry over.
+    private data class EndpointKeys(val endpoints: String, val activeEndpoint: String) {
+        companion object {
+            fun forNetwork(network: FinalisNetwork): EndpointKeys =
+                if (network == FinalisNetwork.MAINNET) {
+                    EndpointKeys(endpoints = "saved_endpoints", activeEndpoint = "active_endpoint")
+                } else {
+                    EndpointKeys(endpoints = "${network.name}.saved_endpoints", activeEndpoint = "${network.name}.active_endpoint")
+                }
+        }
+    }
+
     companion object {
         private const val PREFERENCES_NAME = "rpc_settings"
-        private const val KEY_ENDPOINTS = "saved_endpoints"
-        private const val KEY_ACTIVE_ENDPOINT = "active_endpoint"
-        internal val BUILTIN_FALLBACK_ENDPOINTS = listOf(
-            "http://85.217.171.168:18080",
-            "http://64.23.244.126:18080",
-        )
+        private const val KEY_SELECTED_NETWORK = "selected_network"
+        internal val BUILTIN_FALLBACK_ENDPOINTS = FinalisNetwork.MAINNET.defaultEndpoints
     }
 }
 
-private fun defaultRpcEndpoints(): List<RpcEndpoint> =
-    (listOf(BuildConfig.EXPLORER_BASE_URL) + RpcSettingsRepository.BUILTIN_FALLBACK_ENDPOINTS)
-        .map { normalizeExplorerUrl(it) }
+internal fun defaultRpcEndpoints(network: FinalisNetwork): List<RpcEndpoint> {
+    val configured = if (network == FinalisNetwork.MAINNET) listOf(BuildConfig.EXPLORER_BASE_URL) else emptyList()
+    return (configured + network.defaultEndpoints)
+        .map { normalizeEndpointUrl(it, network) }
         .distinct()
         .map(::RpcEndpoint)
+}
 
 class RuntimeLightserverRepository(
     private val endpointSettingsStore: RpcEndpointSettingsStore,
-    private val repositoryFactory: (RpcEndpoint) -> LightserverRepository = ::explorerRepositoryFor,
+    private val repositoryFactory: (RpcEndpoint, FinalisNetwork) -> LightserverRepository = ::lightserverRepositoryFor,
 ) : LightserverRepository {
     @Volatile
     private var lastUtxoSnapshot: UtxoDiagnosticsSnapshot? = null
 
     override suspend fun loadStatus(): NetworkIdentity {
-        val endpoints = endpointSettingsStore.loadSettings().orderedEndpoints()
+        val settings = endpointSettingsStore.loadSettings()
+        val network = settings.network
+        val endpoints = settings.orderedEndpoints()
         require(endpoints.isNotEmpty()) { "No lightserver endpoints configured" }
         var lastFailureMessage: String? = null
         var firstUnavailableMessage: String? = null
         for (endpoint in endpoints) {
-            val repository = repositoryFactory(endpoint)
-            val probe = probeRpcEndpoint(endpoint, repositoryFactory = { _ -> repository })
+            val repository = repositoryFactory(endpoint, network)
+            val probe = probeRpcEndpoint(endpoint, network, repositoryFactory = { _, _ -> repository })
             when {
                 probe.status != null -> {
                     endpointSettingsStore.setActiveEndpoint(endpoint)
@@ -214,14 +249,16 @@ class RuntimeLightserverRepository(
         withValidatedEndpoint { repository, _, _ -> repository.findFinalizedTxDetail(txid) }
 
     override suspend fun broadcastTx(txHex: String): BroadcastResult {
-        val endpoints = endpointSettingsStore.loadSettings().orderedEndpoints()
+        val settings = endpointSettingsStore.loadSettings()
+        val network = settings.network
+        val endpoints = settings.orderedEndpoints()
         require(endpoints.isNotEmpty()) { "No lightserver endpoints configured" }
         var lastResult: BroadcastResult? = null
         var lastFailureMessage: String? = null
         var firstUnavailableMessage: String? = null
         for (endpoint in endpoints) {
-            val repository = repositoryFactory(endpoint)
-            val probe = probeRpcEndpoint(endpoint, repositoryFactory = { _ -> repository })
+            val repository = repositoryFactory(endpoint, network)
+            val probe = probeRpcEndpoint(endpoint, network, repositoryFactory = { _, _ -> repository })
             if (!probe.isValid) {
                 if (probe.error?.kind == EndpointErrorKind.UNAVAILABLE) {
                     val unavailableMessage = "${endpoint.url}: ${probe.error.rawMessage ?: probe.error.message}"
@@ -262,13 +299,15 @@ class RuntimeLightserverRepository(
     private suspend fun <T> withValidatedEndpoint(
         block: suspend (LightserverRepository, NetworkIdentity, RpcEndpoint) -> T,
     ): T {
-        val endpoints = endpointSettingsStore.loadSettings().orderedEndpoints()
+        val settings = endpointSettingsStore.loadSettings()
+        val network = settings.network
+        val endpoints = settings.orderedEndpoints()
         require(endpoints.isNotEmpty()) { "No lightserver endpoints configured" }
         var lastFailureMessage: String? = null
         var firstUnavailableMessage: String? = null
         for (endpoint in endpoints) {
-            val repository = repositoryFactory(endpoint)
-            val probe = probeRpcEndpoint(endpoint, repositoryFactory = { _ -> repository })
+            val repository = repositoryFactory(endpoint, network)
+            val probe = probeRpcEndpoint(endpoint, network, repositoryFactory = { _, _ -> repository })
             if (!probe.isValid) {
                 if (probe.error?.kind == EndpointErrorKind.UNAVAILABLE) {
                     val unavailableMessage = "${endpoint.url}: ${probe.error.rawMessage ?: probe.error.message}"
@@ -299,12 +338,13 @@ class RuntimeLightserverRepository(
 
 suspend fun probeRpcEndpoint(
     endpoint: RpcEndpoint,
-    repositoryFactory: (RpcEndpoint) -> LightserverRepository = ::explorerRepositoryFor,
+    network: FinalisNetwork,
+    repositoryFactory: (RpcEndpoint, FinalisNetwork) -> LightserverRepository = ::lightserverRepositoryFor,
 ): EndpointProbeResult {
     return try {
-        val repository = repositoryFactory(endpoint)
+        val repository = repositoryFactory(endpoint, network)
         val status = repository.loadStatus()
-        val mismatch = WalletNetworkGuard.detectMismatch(status)
+        val mismatch = WalletNetworkGuard.detectMismatch(status, network)
         EndpointProbeResult(
             endpoint = endpoint,
             status = status,
@@ -329,15 +369,19 @@ fun createLightserverRepository(
         )
     }
 
-// normalizeRpcUrl kept for callers that still pass lightserver RPC URLs;
-// new code should use normalizeExplorerUrl from ExplorerRepository.kt.
-fun normalizeRpcUrl(rawUrl: String): String = normalizeExplorerUrl(rawUrl)
+fun normalizeRpcUrl(rawUrl: String, network: FinalisNetwork): String = normalizeEndpointUrl(rawUrl, network)
 
-private fun explorerRepositoryFor(endpoint: RpcEndpoint): LightserverRepository =
-    ExplorerRepository(
-        explorerBaseUrl = endpoint.url,
-        lightserverRpcUrl = rpcUrlFromExplorerUrl(endpoint.url),
-    )
+private fun lightserverRepositoryFor(endpoint: RpcEndpoint, network: FinalisNetwork): LightserverRepository =
+    when (network.endpointKind) {
+        EndpointKind.EXPLORER -> ExplorerRepository(
+            explorerBaseUrl = endpoint.url,
+            lightserverRpcUrl = rpcUrlFromExplorerUrl(endpoint.url),
+            network = network,
+        )
+        EndpointKind.LIGHTSERVER_RPC -> LiveLightserverRepository(
+            transport = UrlConnectionLightserverTransport(endpoint.url),
+        )
+    }
 
 private fun probeDisplayMessage(probe: EndpointProbeResult): String =
     when {
