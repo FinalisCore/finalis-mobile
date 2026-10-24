@@ -24,7 +24,7 @@ class WalletNetworkGuardTest {
         val status = statusFor(
             FinalisNetwork.TESTNET,
             networkId = "a6ffe3b32f81d1ad7df761693dc87dd8",
-            genesisHash = "5cabf22be344bd39a37a3a434e7a00dfa2caaba8f148de88cdcef706a103f7a0",
+            genesisHash = "4faa7e1b8e79509c767f7f51f711eba7c75e9e9e4d9ea105fa020dd15cdd9d0c",
         )
         assertNull(WalletNetworkGuard.detectMismatch(status, FinalisNetwork.TESTNET))
     }

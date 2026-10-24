@@ -13,4 +13,4 @@ g++ -std=c++20 -DSC_HAS_LIBSODIUM=1 -DSC_HAS_ROCKSDB=1 -DSC_HAS_SECP256K1=1 -DSC
 ./sighash_vector > ../../test-vectors/tx/sighash-v1-testnet.json
 ```
 
-Generated from finalis-core `8d9f517`.
+Generated from finalis-core v2.1.0 (testnet-2 genesis `4faa7e1b…`).

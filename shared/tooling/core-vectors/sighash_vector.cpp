@@ -20,7 +20,7 @@ static Hash32 fill32(std::uint8_t start) {
 
 int main() {
   const std::string network_id_hex = "a6ffe3b32f81d1ad7df761693dc87dd8";
-  const std::string genesis_hash_hex = "5cabf22be344bd39a37a3a434e7a00dfa2caaba8f148de88cdcef706a103f7a0";
+  const std::string genesis_hash_hex = "4faa7e1b8e79509c767f7f51f711eba7c75e9e9e4d9ea105fa020dd15cdd9d0c";
   const auto domain = chain_domain_from_hex(network_id_hex, genesis_hash_hex);
   if (!domain) return 1;
 
