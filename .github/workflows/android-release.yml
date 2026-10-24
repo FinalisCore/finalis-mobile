@@ -1,6 +1,6 @@
 name: Android Release
 
-# Push a tag like v0.0.17 to build the APK and publish it on a GitHub Release.
+# Push a tag like v0.0.19 to build the APK and publish it on a GitHub Release.
 on:
   push:
     tags:
@@ -25,16 +25,35 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Same debug key as earlier releases, so new APKs install over existing ones.
+      # Every published APK is signed with one fixed key; Android refuses an update signed with
+      # another. The build fails if the APK's certificate is not the pinned one.
       - name: Restore signing key
         env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          FINALIS_KEYSTORE_BASE64: ${{ secrets.FINALIS_KEYSTORE_BASE64 }}
         run: |
-          test -n "$DEBUG_KEYSTORE_BASE64" || { echo "DEBUG_KEYSTORE_BASE64 secret is missing"; exit 1; }
-          mkdir -p ~/.android
-          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+          test -n "$FINALIS_KEYSTORE_BASE64" || { echo "FINALIS_KEYSTORE_BASE64 secret is missing"; exit 1; }
+          echo "$FINALIS_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/finalis.keystore"
 
-      - run: ./gradlew test :app:assembleDebug
+      - name: Build APK
+        env:
+          FINALIS_KEYSTORE_FILE: ${{ runner.temp }}/finalis.keystore
+          FINALIS_KEYSTORE_PASSWORD: ${{ secrets.FINALIS_KEYSTORE_PASSWORD }}
+          FINALIS_KEY_ALIAS: ${{ secrets.FINALIS_KEY_ALIAS }}
+          FINALIS_KEY_PASSWORD: ${{ secrets.FINALIS_KEY_PASSWORD }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # vMAJOR.MINOR.PATCH -> versionCode MAJOR*10000 + MINOR*100 + PATCH, which always increases.
+          [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || { echo "tag $TAG is not vMAJOR.MINOR.PATCH"; exit 1; }
+          code=$(( BASH_REMATCH[1] * 10000 + BASH_REMATCH[2] * 100 + BASH_REMATCH[3] ))
+          ./gradlew test :app:assembleDebug -Pfinalis.versionCode="$code" -Pfinalis.versionName="${TAG#v}"
+
+      - name: Check APK signer
+        run: |
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)/apksigner"
+          actual="$("$apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | sed -nE 's/^Signer #1 certificate SHA-256 digest: //p')"
+          expected="$(tr -d '[:space:]' < ../.github/apk-signer-sha256.txt)"
+          echo "APK signer: $actual"
+          [[ "$actual" == "$expected" ]] || { echo "::error::APK signer $actual is not the pinned $expected"; exit 1; }
 
       - name: Publish release
         env:

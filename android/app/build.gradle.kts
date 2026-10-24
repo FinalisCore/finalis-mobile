@@ -8,6 +8,12 @@ val useMockLightserver =
     providers.gradleProperty("finalis.useMockLightserver").orElse("false").map(String::toBoolean)
 val explorerBaseUrl =
     providers.gradleProperty("finalis.explorerBaseUrl").orElse("http://85.217.171.168:18080")
+// Set by the release workflow from the tag (v0.0.18 -> code 18, name 0.0.18).
+val appVersionCode = providers.gradleProperty("finalis.versionCode").orElse("1").map(String::toInt)
+val appVersionName = providers.gradleProperty("finalis.versionName").orElse("0.0.0-dev")
+// The fixed key every published APK is signed with, so each release installs over the last one.
+// Without it (local builds) Android's per-machine debug key is used.
+val signingKeystore = providers.environmentVariable("FINALIS_KEYSTORE_FILE")
 
 android {
     buildToolsVersion = "36.0.0"
@@ -18,8 +24,8 @@ android {
         applicationId = "com.finalis.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode.get()
+        versionName = appVersionName.get()
         buildConfigField("boolean", "USE_MOCK_LIGHTSERVER", useMockLightserver.get().toString())
         buildConfigField("String", "EXPLORER_BASE_URL", "\"${explorerBaseUrl.get()}\"")
     }
@@ -29,7 +35,21 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        if (signingKeystore.isPresent) {
+            create("finalis") {
+                storeFile = file(signingKeystore.get())
+                storePassword = providers.environmentVariable("FINALIS_KEYSTORE_PASSWORD").get()
+                keyAlias = providers.environmentVariable("FINALIS_KEY_ALIAS").get()
+                keyPassword = providers.environmentVariable("FINALIS_KEY_PASSWORD").get()
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            if (signingKeystore.isPresent) signingConfig = signingConfigs.getByName("finalis")
+        }
         release {
             // Cleartext HTTP is limited to known endpoint hosts by res/xml/network_security_config.xml.
             isMinifyEnabled = false
