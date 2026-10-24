@@ -49,11 +49,17 @@ jobs:
 
       - name: Check APK signer
         run: |
-          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)/apksigner"
-          actual="$("$apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | sed -nE 's/^Signer #1 certificate SHA-256 digest: //p')"
+          set -o pipefail
+          # The build-tools version app/build.gradle.kts pins; fall back to the newest installed.
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          [[ -x "$apksigner" ]] || apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)/apksigner"
+          out="$("$apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk)"
+          echo "$out"
+          # "Signer #1 certificate ..." or, with key rotation, "Signer (minSdkVersion=...) certificate ...".
+          actual="$(sed -nE 's/^Signer.* certificate SHA-256 digest: //p' <<<"$out" | head -n1)"
           expected="$(tr -d '[:space:]' < ../.github/apk-signer-sha256.txt)"
           echo "APK signer: $actual"
-          [[ "$actual" == "$expected" ]] || { echo "::error::APK signer $actual is not the pinned $expected"; exit 1; }
+          [[ "$actual" == "$expected" ]] || { echo "::error::APK signer '$actual' is not the pinned $expected"; exit 1; }
 
       - name: Publish release
         env:
