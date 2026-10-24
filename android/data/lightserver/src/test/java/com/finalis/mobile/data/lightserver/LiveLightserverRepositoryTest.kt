@@ -1,5 +1,7 @@
 package com.finalis.mobile.data.lightserver
 
+import com.finalis.mobile.core.model.TxDirection
+import com.finalis.mobile.core.model.TxStatus
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
@@ -114,6 +116,47 @@ class LiveLightserverRepositoryTest {
         assertEquals(6L, detail.finalizedDepth)
         assertEquals(1, detail.outputs.size)
         assertEquals(MockLightserverJson.KnownWalletAddress, detail.outputs.first().address)
+    }
+
+    @Test
+    fun `history resolves settlement payouts that get_tx does not know`() = suspendTest {
+        val transport = FakeTransport(
+            mapOf(
+                "validate_address" to MockLightserverJson.validateAddress,
+                "get_history_page" to MockLightserverJson.historyPage,
+                "get_tx" to NotFoundRpcError,
+                "get_settlement" to settlementJson(),
+            ),
+        )
+        val repository = LiveLightserverRepository(transport = transport)
+
+        val history = repository.loadHistory(MockLightserverJson.KnownWalletAddress, limit = 25)
+
+        assertEquals(1, history.size)
+        assertEquals(TxDirection.RECEIVE, history.first().direction)
+        assertEquals(700_000_000L, history.first().netValue)
+        assertTrue(transport.bodies.any { it.contains("\"method\":\"get_settlement\"") })
+    }
+
+    @Test
+    fun `tx detail falls back to get_settlement for a reward payout`() = suspendTest {
+        val repository = LiveLightserverRepository(
+            transport = FakeTransport(
+                mapOf(
+                    "get_tx_status" to """{"jsonrpc":"2.0","id":1,"result":{"txid":"${"e".repeat(64)}","status":"not_found","finalized":false,"finalized_depth":0,"credit_safe":false}}""",
+                    "get_settlement" to settlementJson(),
+                    "validate_address" to MockLightserverJson.validateAddress,
+                ),
+            ),
+        )
+
+        val detail = repository.loadTxDetail("e".repeat(64))
+
+        assertEquals(42L, detail.height)
+        assertEquals(TxStatus.FINALIZED, detail.status)
+        assertTrue(detail.inputs.isEmpty())
+        assertEquals(700_000_000L, detail.outputs.single().value)
+        assertEquals(MockLightserverJson.KnownWalletAddress, detail.outputs.single().address)
     }
 
     @Test
@@ -267,6 +310,12 @@ class LiveLightserverRepositoryTest {
         assertEquals("mainnet", status.name)
     }
 }
+
+private const val NotFoundRpcError = """{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"not found"}}"""
+
+// A reward payout of 7 FLS to the mock wallet's script (MockLightserverJson.validateAddress).
+private fun settlementJson(): String =
+    """{"jsonrpc":"2.0","id":1,"result":{"txid":"${"e".repeat(64)}","height":42,"transition_hash":"${"d".repeat(64)}","decoded_outputs":[{"amount":700000000,"script_hex":"76a914e30cba700faebff9cf482d3589bd1cbcc903d28088ac","address":"${MockLightserverJson.KnownWalletAddress}","decoded_kind":null}]}}"""
 
 private class FakeTransport(
     private val responses: Map<String, String>,
