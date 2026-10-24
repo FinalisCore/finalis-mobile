@@ -16,6 +16,7 @@ import com.finalis.mobile.core.model.WalletAddress
 import com.finalis.mobile.core.model.WalletUtxo
 import com.finalis.mobile.core.wallet.FinalisTxCodec
 import com.finalis.mobile.core.wallet.ParsedWalletTx
+import com.finalis.mobile.core.wallet.WalletTxOutput
 import java.net.HttpURLConnection
 import java.security.MessageDigest
 import kotlinx.serialization.SerialName
@@ -179,8 +180,8 @@ class LiveLightserverRepository(
         )
         requireCompatibleHistoryPage(page)
         val items = page.items.map { item ->
-            val txPayload = rpcCall<TxResultDto>("get_tx", txidParams(item.txid))
-            val tx = parseTx(txPayload.txHex)
+            val tx = loadTxOrSettlement(item.txid.lowercase())
+                ?: throw LightserverRpcException(NotFoundRpcCode, "not found")
             val computation = computeHistoryEntry(tx, targetScript)
             HistoryEntry(
                 txid = item.txid.lowercase(),
@@ -210,6 +211,9 @@ class LiveLightserverRepository(
         require(Hex32.matches(txid)) { "txid must be hex32" }
         val txStatus = rpcCall<TxStatusDto>("get_tx_status", txidParams(txid.lowercase()))
         requireCompatibleTxStatus(txStatus)
+        if (txStatus.status == "not_found") {
+            loadSettlement(txid.lowercase())?.let { return settlementDetail(it) }
+        }
         require(txStatus.finalized && txStatus.height != null) { "Transaction is not finalized" }
         val txPayload = rpcCall<TxResultDto>("get_tx", txidParams(txid.lowercase()))
         val tx = parseTx(txPayload.txHex)
@@ -236,7 +240,7 @@ class LiveLightserverRepository(
             requireCompatibleTxStatus(txStatus)
             if (!txStatus.finalized || txStatus.status == "not_found") null else loadTxDetail(txid)
         } catch (error: LightserverRpcException) {
-            if (error.code == -32001) null else throw error
+            if (error.code == NotFoundRpcCode) null else throw error
         }
 
     override suspend fun broadcastTx(txHex: String): BroadcastResult {
@@ -271,6 +275,53 @@ class LiveLightserverRepository(
         }
     }
 
+    /**
+     * A finalized transaction, or a settlement (reward payout) as a transaction with no inputs, the
+     * way core projects it. Core keeps settlements under a synthetic txid that get_tx reports as not
+     * found, so those come from get_settlement. Null when neither knows the txid.
+     */
+    private suspend fun loadTxOrSettlement(txid: String): ParsedWalletTx? {
+        val txPayload = try {
+            rpcCall<TxResultDto>("get_tx", txidParams(txid))
+        } catch (error: LightserverRpcException) {
+            if (error.code != NotFoundRpcCode) throw error
+            null
+        }
+        if (txPayload != null) return parseTx(txPayload.txHex)
+        val settlement = loadSettlement(txid) ?: return null
+        return ParsedWalletTx(
+            version = 1,
+            inputs = emptyList(),
+            outputs = settlement.decodedOutputs.map {
+                WalletTxOutput(valueUnits = it.amount, scriptPubKeyHex = it.scriptHex.lowercase())
+            },
+            lockTime = 0,
+        )
+    }
+
+    private suspend fun loadSettlement(txid: String): SettlementDto? =
+        try {
+            rpcCall<SettlementDto>("get_settlement", txidParams(txid))
+        } catch (error: LightserverRpcException) {
+            if (error.code == NotFoundRpcCode) null else throw error
+        }
+
+    private suspend fun settlementDetail(settlement: SettlementDto): TxDetail =
+        TxDetail(
+            txid = settlement.txid.lowercase(),
+            height = settlement.height,
+            status = TxStatus.FINALIZED,
+            finalizedTransitionHash = settlement.transitionHash?.lowercase(),
+            inputs = emptyList(),
+            outputs = settlement.decodedOutputs.mapIndexed { index, output ->
+                TxOutput(
+                    index = index,
+                    value = output.amount,
+                    address = resolveOutputAddress(output.scriptHex),
+                )
+            },
+        )
+
     private fun parseTx(txHex: String): ParsedWalletTx =
         try {
             FinalisTxCodec.parseTxHex(txHex)
@@ -283,14 +334,7 @@ class LiveLightserverRepository(
         var debited = 0L
         for (input in tx.inputs) {
             if (input.prevTxidHex == ZeroTxid) continue
-            // Reward/settlement outputs are credited without a tx record, so get_tx reports not found
-            // (-32001) for them; their value cannot be attributed here.
-            val prevTxPayload = try {
-                rpcCall<TxResultDto>("get_tx", txidParams(input.prevTxidHex.lowercase()))
-            } catch (error: LightserverRpcException) {
-                if (error.code == -32001) continue else throw error
-            }
-            val prevTx = parseTx(prevTxPayload.txHex)
+            val prevTx = loadTxOrSettlement(input.prevTxidHex.lowercase()) ?: continue
             val prevOutput = prevTx.outputs.getOrNull(input.prevIndex)
             if (prevOutput != null && prevOutput.scriptPubKeyHex.lowercase() == targetScriptPubKeyHex) {
                 debited += prevOutput.valueUnits
@@ -684,6 +728,20 @@ private data class TxResultDto(
 )
 
 @Serializable
+private data class SettlementOutputDto(
+    val amount: Long,
+    @SerialName("script_hex") val scriptHex: String,
+)
+
+@Serializable
+private data class SettlementDto(
+    val txid: String,
+    val height: Long,
+    @SerialName("transition_hash") val transitionHash: String? = null,
+    @SerialName("decoded_outputs") val decodedOutputs: List<SettlementOutputDto>,
+)
+
+@Serializable
 private data class TxStatusDto(
     val txid: String,
     val status: String,
@@ -717,6 +775,9 @@ private data class ValidateAddressDto(
     @SerialName("scripthash_hex") val scriptHashHex: String? = null,
     val error: String? = null,
 )
+
+// Core lightserver's JSON-RPC code for an unknown txid (get_tx, get_settlement).
+private const val NotFoundRpcCode = -32001
 
 private fun emptyParams(): JsonObject = buildJsonObject { }
 
