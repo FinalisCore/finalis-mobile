@@ -48,10 +48,11 @@ data class FinalisNetwork(
             displayName = "Testnet",
             hrp = "tsc",
             networkId = "a6ffe3b32f81d1ad7df761693dc87dd8",
-            genesisHash = "4faa7e1b8e79509c767f7f51f711eba7c75e9e9e4d9ea105fa020dd15cdd9d0c",
+            genesisHash = "f68c3097f1b5fce94ef79840418617719c75b57ee66b7bd51b6735a8a34193b6",
             magic = 1414742833,
             endpointKind = EndpointKind.LIGHTSERVER_RPC,
             defaultEndpoints = listOf(
+                "https://159.200.236.114/rpc",
                 "http://130.61.126.39:19544/rpc",
             ),
         )

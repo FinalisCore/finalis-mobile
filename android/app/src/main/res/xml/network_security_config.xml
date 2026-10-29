@@ -3,7 +3,8 @@
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
     <domain-config cleartextTrafficPermitted="true">
-        <!-- Public testnet lightserver RPC (http://130.61.126.39:19544/rpc). -->
+        <!-- Public testnet lightserver RPC (http://130.61.126.39:19544/rpc); the other default,
+             https://159.200.236.114/rpc, is HTTPS and needs no exception. -->
         <domain includeSubdomains="false">130.61.126.39</domain>
         <!-- Mainnet default explorers (FinalisNetwork.MAINNET.defaultEndpoints). -->
         <domain includeSubdomains="false">85.217.171.168</domain>
