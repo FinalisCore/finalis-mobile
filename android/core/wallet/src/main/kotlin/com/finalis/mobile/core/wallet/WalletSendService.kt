@@ -80,6 +80,7 @@ class WalletSendService(
         val signedTx = FinalisTxCodec.signAllInputsP2PKH(
             tx = unsignedTx,
             chainDomain = chainDomain,
+            spent = selected.map { WalletTxOutput(valueUnits = it.valueUnits, scriptPubKeyHex = it.scriptPubKeyHex) },
             privateKeyHex = wallet.privateKeyHex,
             publicKeyHex = wallet.walletProfile.publicKeyHex,
         )

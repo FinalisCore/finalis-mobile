@@ -77,20 +77,42 @@ object FinalisTxCodec {
         return chainDomain(network.networkId, genesisHash)
     }
 
+    /** Core `spent_outputs_hash`: sha256d("SC-SPENT-V1" || varint(n) || n x (u64le(value) || varbytes(script_pubkey))). */
+    fun spentOutputsHash(spent: List<WalletTxOutput>): ByteArray {
+        val writer = TxWriter()
+        writer.bytes("SC-SPENT-V1".toByteArray(Charsets.UTF_8))
+        writer.varint(spent.size.toLong())
+        spent.forEach { output ->
+            writer.u64le(output.valueUnits)
+            writer.varbytes(output.scriptPubKeyHex.hexToBytes())
+        }
+        return sha256d(writer.finish())
+    }
+
     /**
      * Core `signing_message_for_input`:
-     * sha256d("SC-SIG-V1" || chain_domain[32] || u32le(input_index) || sha256d(tx without hashcash, script_sigs cleared)).
+     * sha256d("SC-SIG-V4" || chain_domain[32] || u32le(input_index) || sha256d(tx without hashcash, script_sigs cleared)
+     *   || spentOutputsHash(spent)).
+     * `spent` is the output each input spends, in input order, as the chain holds it: a wrong value or
+     * script for any of them makes every signature of the transaction invalid.
      */
-    fun signingMessageForInput(tx: WalletTx, inputIndex: Int, chainDomain: ByteArray): ByteArray {
+    fun signingMessageForInput(
+        tx: WalletTx,
+        inputIndex: Int,
+        chainDomain: ByteArray,
+        spent: List<WalletTxOutput>,
+    ): ByteArray {
         require(inputIndex in tx.inputs.indices) { "Input index out of range" }
         require(chainDomain.size == 32) { "Chain domain must be 32 bytes" }
+        require(spent.size == tx.inputs.size) { "Spent outputs must match the inputs" }
         val txCopy = tx.copy(inputs = tx.inputs.map { it.copy(scriptSigHex = "") })
         val txHash = sha256d(serializeTxWithoutHashcash(txCopy))
         val writer = TxWriter()
-        writer.bytes("SC-SIG-V1".toByteArray(Charsets.UTF_8))
+        writer.bytes("SC-SIG-V4".toByteArray(Charsets.UTF_8))
         writer.bytes(chainDomain)
         writer.u32le(inputIndex)
         writer.bytes(txHash)
+        writer.bytes(spentOutputsHash(spent))
         return sha256d(writer.finish())
     }
 
@@ -98,10 +120,14 @@ object FinalisTxCodec {
         tx: WalletTx,
         inputIndex: Int,
         chainDomain: ByteArray,
+        spent: List<WalletTxOutput>,
         privateKeyHex: String,
         publicKeyHex: String,
     ): WalletTx {
-        val signature = FinalisKeyDerivation.signEd25519(signingMessageForInput(tx, inputIndex, chainDomain), privateKeyHex)
+        val signature = FinalisKeyDerivation.signEd25519(
+            signingMessageForInput(tx, inputIndex, chainDomain, spent),
+            privateKeyHex,
+        )
         val publicKey = publicKeyHex.hexToBytes()
         require(publicKey.size == 32) { "Public key must be 32 bytes hex" }
         val scriptSig = TxWriter()
@@ -116,10 +142,16 @@ object FinalisTxCodec {
         return tx.copy(inputs = updatedInputs)
     }
 
-    fun signAllInputsP2PKH(tx: WalletTx, chainDomain: ByteArray, privateKeyHex: String, publicKeyHex: String): WalletTx {
+    fun signAllInputsP2PKH(
+        tx: WalletTx,
+        chainDomain: ByteArray,
+        spent: List<WalletTxOutput>,
+        privateKeyHex: String,
+        publicKeyHex: String,
+    ): WalletTx {
         var signed = tx
         for (index in tx.inputs.indices) {
-            signed = signInputP2PKH(signed, index, chainDomain, privateKeyHex, publicKeyHex)
+            signed = signInputP2PKH(signed, index, chainDomain, spent, privateKeyHex, publicKeyHex)
         }
         return signed
     }

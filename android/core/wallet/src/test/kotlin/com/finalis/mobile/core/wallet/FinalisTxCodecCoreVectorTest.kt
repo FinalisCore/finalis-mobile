@@ -11,11 +11,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 /**
- * Byte-for-byte check against `shared/test-vectors/tx/sighash-v1-testnet.json`, which is generated
+ * Byte-for-byte check against `shared/test-vectors/tx/sighash-v4-testnet.json`, which is generated
  * by finalis-core itself (`shared/tooling/core-vectors/sighash_vector.cpp`).
  */
 class FinalisTxCodecCoreVectorTest {
-    private val vector = loadVector("tx/sighash-v1-testnet.json")
+    private val vector = loadVector("tx/sighash-v4-testnet.json")
 
     private val unsignedTx = WalletTx(
         version = 1,
@@ -28,6 +28,11 @@ class FinalisTxCodecCoreVectorTest {
             WalletTxOutput(48_000L, FinalisAddressCodec.scriptPubKeyHexFromAddress(vector.getValue("sender_address"))),
         ),
         lockTime = 0,
+    )
+
+    private val spent = listOf(
+        WalletTxOutput(vector.getValue("spent_0_value").toLong(), vector.getValue("spent_0_script_pubkey_hex")),
+        WalletTxOutput(vector.getValue("spent_1_value").toLong(), vector.getValue("spent_1_script_pubkey_hex")),
     )
 
     @Test
@@ -58,10 +63,32 @@ class FinalisTxCodecCoreVectorTest {
     }
 
     @Test
+    fun `spent outputs hash matches core spent_outputs_hash`() {
+        assertEquals(vector.getValue("spent_outputs_hash_hex"), FinalisTxCodec.spentOutputsHash(spent).toHex())
+    }
+
+    @Test
     fun `sighash per input matches core signing_message_for_input`() {
         val domain = FinalisTxCodec.chainDomain(FinalisNetwork.TESTNET)
-        assertEquals(vector.getValue("sighash_input_0_hex"), FinalisTxCodec.signingMessageForInput(unsignedTx, 0, domain).toHex())
-        assertEquals(vector.getValue("sighash_input_1_hex"), FinalisTxCodec.signingMessageForInput(unsignedTx, 1, domain).toHex())
+        assertEquals(vector.getValue("sighash_input_0_hex"), FinalisTxCodec.signingMessageForInput(unsignedTx, 0, domain, spent).toHex())
+        assertEquals(vector.getValue("sighash_input_1_hex"), FinalisTxCodec.signingMessageForInput(unsignedTx, 1, domain, spent).toHex())
+    }
+
+    @Test
+    fun `sighash covers the spent value and script`() {
+        val domain = FinalisTxCodec.chainDomain(FinalisNetwork.TESTNET)
+        val expected = vector.getValue("sighash_input_0_hex")
+        val lowerValue = listOf(spent[0].copy(valueUnits = spent[0].valueUnits - 1), spent[1])
+        val otherScript = listOf(spent[0], spent[1].copy(scriptPubKeyHex = vector.getValue("spent_0_script_pubkey_hex").replaceRange(6, 8, "00")))
+        assertFailsWith<AssertionError> {
+            assertEquals(expected, FinalisTxCodec.signingMessageForInput(unsignedTx, 0, domain, lowerValue).toHex())
+        }
+        assertFailsWith<AssertionError> {
+            assertEquals(expected, FinalisTxCodec.signingMessageForInput(unsignedTx, 0, domain, otherScript).toHex())
+        }
+        assertFailsWith<IllegalArgumentException> {
+            FinalisTxCodec.signingMessageForInput(unsignedTx, 0, domain, spent.take(1))
+        }
     }
 
     @Test
@@ -69,6 +96,7 @@ class FinalisTxCodecCoreVectorTest {
         val signed = FinalisTxCodec.signAllInputsP2PKH(
             tx = unsignedTx,
             chainDomain = FinalisTxCodec.chainDomain(FinalisNetwork.TESTNET),
+            spent = spent,
             privateKeyHex = vector.getValue("private_key_hex"),
             publicKeyHex = vector.getValue("public_key_hex"),
         )
@@ -88,12 +116,12 @@ class FinalisTxCodecCoreVectorTest {
         val built = WalletSendService().buildAndSignTransaction(
             wallet = wallet,
             spendableUtxos = listOf(
-                com.finalis.mobile.core.model.WalletUtxo(hexRange(0x40), 3, 100_000L, 10L, senderScript),
-                com.finalis.mobile.core.model.WalletUtxo(hexRange(0x10), 0, 100_000L, 10L, senderScript),
+                com.finalis.mobile.core.model.WalletUtxo(hexRange(0x40), 3, 79_000L, 10L, senderScript),
+                com.finalis.mobile.core.model.WalletUtxo(hexRange(0x10), 0, 120_000L, 10L, senderScript),
             ),
             recipientAddress = vector.getValue("recipient_address"),
             amountUnits = 150_000L,
-            requestedFeeUnits = 2_000L,
+            requestedFeeUnits = 1_000L,
         )
         assertEquals(vector.getValue("signed_tx_hex"), built.txHex)
         assertEquals(vector.getValue("signed_txid_hex"), built.txid)
@@ -129,8 +157,8 @@ class FinalisTxCodecCoreVectorTest {
         assertEquals(32, testnet.size)
         assertFailsWith<AssertionError> {
             assertContentEquals(
-                FinalisTxCodec.signingMessageForInput(unsignedTx, 0, testnet),
-                FinalisTxCodec.signingMessageForInput(unsignedTx, 0, other),
+                FinalisTxCodec.signingMessageForInput(unsignedTx, 0, testnet, spent),
+                FinalisTxCodec.signingMessageForInput(unsignedTx, 0, other, spent),
             )
         }
     }

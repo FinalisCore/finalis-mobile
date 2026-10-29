@@ -37,8 +37,11 @@ class RpcSettingsRepositoryTest {
         val settings = repository.loadSettings()
 
         assertEquals(FinalisNetwork.TESTNET, settings.network)
-        assertEquals(listOf(RpcEndpoint("http://130.61.126.39:19544/rpc")), settings.savedEndpoints)
-        assertEquals(RpcEndpoint("http://130.61.126.39:19544/rpc"), settings.activeEndpoint)
+        assertEquals(
+            listOf(RpcEndpoint("https://159.200.236.114/rpc"), RpcEndpoint("http://130.61.126.39:19544/rpc")),
+            settings.savedEndpoints,
+        )
+        assertEquals(RpcEndpoint("https://159.200.236.114/rpc"), settings.activeEndpoint)
     }
 
     @Test

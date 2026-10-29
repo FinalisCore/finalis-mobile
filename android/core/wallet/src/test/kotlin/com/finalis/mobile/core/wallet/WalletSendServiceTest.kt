@@ -27,7 +27,7 @@ class WalletSendServiceTest {
     fun `builds and signs testnet tx matching core build_p2pkh_tx`() {
         // finalis-cli build_p2pkh_tx --testnet --prev-txid 11…11 --prev-index 1 --prev-value 1000000
         //   --from-privkey 000102…1f --to-address tsc1addeqodb… --amount 250000 --fee 1000
-        //   --change-address tsc1adrqzotq… --genesis-hash 4faa7e1b…9d0c
+        //   --change-address tsc1adrqzotq…   (testnet-3 genesis f68c3097…, SC-SIG-V4)
         val service = WalletSendService()
         val tx = service.buildAndSignTransaction(
             wallet = wallet,
@@ -45,9 +45,9 @@ class WalletSendServiceTest {
             requestedFeeUnits = 1_000L,
         )
 
-        assertEquals("a39c987833afe561ea7dab06991b18561a698e9e2f404cacc2b902a36eb1095e", tx.txid)
+        assertEquals("8f9ff54656ae7d17571330a0f7db413d3b6350d0eaa2f309da3ec21ad32aaf32", tx.txid)
         assertEquals(
-            "010000000111111111111111111111111111111111111111111111111111111111111111110100000062407e76042fdaa1f0e4f562412eae327a1ca0e8c27aa35ab0c74565af189db5d1992a92f6bf3d9c1c58d6d3c5a21b8c4e875f198b2466717c4c2a9872b13b4713002003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8ffffffff0290d00300000000001976a914c6483861d53cd667df6d21320d58e3593180e1b388acc86d0b00000000001976a914e30cba700faebff9cf482d3589bd1cbcc903d28088ac0000000000",
+            "010000000111111111111111111111111111111111111111111111111111111111111111110100000062404cfb3eebce1413fb0784bef13f11708515e9fc7e0869f37bdce83567b4c159dead90f5fe97684fbc0ac53033775e8fce0747cf2b31e1410ee47d5bf72598f60d2003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8ffffffff0290d00300000000001976a914c6483861d53cd667df6d21320d58e3593180e1b388acc86d0b00000000001976a914e30cba700faebff9cf482d3589bd1cbcc903d28088ac0000000000",
             tx.txHex,
         )
         assertEquals(749_000L, tx.changeUnits)
